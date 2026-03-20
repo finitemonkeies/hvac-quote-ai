@@ -37,6 +37,7 @@ export function Preview() {
           ),
         )
       : null;
+  const canApprove = profile?.role === "manager";
 
   useEffect(() => {
     if (options.length === 0) {
@@ -157,7 +158,9 @@ export function Preview() {
 
         <div className="grid gap-3 border-b border-slate-200 py-5 text-sm text-slate-700 sm:grid-cols-2">
           <div className="rounded-2xl bg-slate-50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Upsells Included</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Upsells Included
+            </p>
             <p className="mt-2 font-medium text-slate-950">
               {[
                 draft.thermostatUpgrade && "Thermostat",
@@ -273,4 +276,3 @@ export function Preview() {
     </AppShell>
   );
 }
-  const canApprove = profile?.role === "manager";
