@@ -10,6 +10,7 @@ import {
 import type {
   EstimateApprovalStatus,
   EstimateDraft,
+  EstimateOutcomeStatus,
   EstimateRecord,
   ProposalDeliveryEvent,
   PricingRules,
@@ -34,6 +35,8 @@ const CURRENT_CREATED_AT_KEY = "hvac-quote-ai.current-created-at";
 const CURRENT_SELECTED_OPTION_KEY = "hvac-quote-ai.current-selected-option";
 const CURRENT_APPROVAL_STATUS_KEY = "hvac-quote-ai.current-approval-status";
 const CURRENT_APPROVAL_NOTE_KEY = "hvac-quote-ai.current-approval-note";
+const CURRENT_OUTCOME_STATUS_KEY = "hvac-quote-ai.current-outcome-status";
+const CURRENT_OUTCOME_NOTE_KEY = "hvac-quote-ai.current-outcome-note";
 const CURRENT_DELIVERY_HISTORY_KEY = "hvac-quote-ai.current-delivery-history";
 const COMPANY_PROFILE_KEY = "hvac-quote-ai.company-profile";
 const PRICING_RULES_KEY = "hvac-quote-ai.pricing-rules";
@@ -112,6 +115,8 @@ interface EstimateContextValue {
   selectedOptionId: string | null;
   approvalStatus: EstimateApprovalStatus;
   approvalNote: string;
+  outcomeStatus: EstimateOutcomeStatus;
+  outcomeNote: string;
   deliveryHistory: ProposalDeliveryEvent[];
   isGenerating: boolean;
   isLoadingRecent: boolean;
@@ -124,6 +129,7 @@ interface EstimateContextValue {
   refineOption: (optionId: string, updates: Partial<QuoteOptionInput>) => void;
   selectOption: (optionId: string) => void;
   updateApproval: (input: { status?: EstimateApprovalStatus; note?: string }) => void;
+  updateOutcome: (input: { status?: EstimateOutcomeStatus; note?: string }) => void;
   loadEstimate: (record: EstimateRecord) => void;
   saveEstimate: (delivery?: {
     method: NonNullable<EstimateRecord["deliveryMethod"]>;
@@ -190,6 +196,10 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     readStorage<EstimateApprovalStatus>(CURRENT_APPROVAL_STATUS_KEY, "not-required"),
   );
   const [approvalNote, setApprovalNote] = useState(() => readStorage(CURRENT_APPROVAL_NOTE_KEY, ""));
+  const [outcomeStatus, setOutcomeStatus] = useState<EstimateOutcomeStatus>(() =>
+    readStorage<EstimateOutcomeStatus>(CURRENT_OUTCOME_STATUS_KEY, "draft"),
+  );
+  const [outcomeNote, setOutcomeNote] = useState(() => readStorage(CURRENT_OUTCOME_NOTE_KEY, ""));
   const [deliveryHistory, setDeliveryHistory] = useState<ProposalDeliveryEvent[]>(() =>
     readStorage(CURRENT_DELIVERY_HISTORY_KEY, []),
   );
@@ -235,6 +245,14 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     writeStorage(CURRENT_APPROVAL_NOTE_KEY, approvalNote);
   }, [approvalNote]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_OUTCOME_STATUS_KEY, outcomeStatus);
+  }, [outcomeStatus]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_OUTCOME_NOTE_KEY, outcomeNote);
+  }, [outcomeNote]);
 
   useEffect(() => {
     writeStorage(CURRENT_DELIVERY_HISTORY_KEY, deliveryHistory);
@@ -340,6 +358,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setSelectedOptionId(null);
     setApprovalStatus("not-required");
     setApprovalNote("");
+    setOutcomeStatus("draft");
+    setOutcomeNote("");
     setCurrentEstimateId(null);
     setCurrentEstimateCreatedAt(null);
     setDeliveryHistory([]);
@@ -423,6 +443,16 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     }
   };
 
+  const updateOutcome = (input: { status?: EstimateOutcomeStatus; note?: string }) => {
+    if (input.status) {
+      setOutcomeStatus(input.status);
+    }
+
+    if (input.note !== undefined) {
+      setOutcomeNote(input.note);
+    }
+  };
+
   const loadEstimate = (record: EstimateRecord) => {
     setDraft(record.draft);
     setOptions(record.options);
@@ -430,6 +460,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setSelectedOptionId(record.selectedOptionId);
     setApprovalStatus(record.approvalStatus ?? "not-required");
     setApprovalNote(record.approvalNote ?? "");
+    setOutcomeStatus(record.outcomeStatus ?? "draft");
+    setOutcomeNote(record.outcomeNote ?? "");
     setCurrentEstimateId(record.id);
     setCurrentEstimateCreatedAt(record.createdAt);
     setDeliveryHistory(record.deliveryHistory);
@@ -463,6 +495,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       selectedOptionId,
       approvalStatus,
       approvalNote,
+      outcomeStatus: delivery && outcomeStatus === "draft" ? "sent" : outcomeStatus,
+      outcomeNote,
       deliveryMethod: delivery?.method,
       deliveryHistory: nextDeliveryHistory,
     };
@@ -491,6 +525,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       selectedOptionId,
       approvalStatus,
       approvalNote,
+      outcomeStatus,
+      outcomeNote,
       deliveryHistory,
       isGenerating,
       isLoadingRecent,
@@ -503,6 +539,7 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       refineOption,
       selectOption,
       updateApproval,
+      updateOutcome,
       loadEstimate,
       saveEstimate,
     }),
@@ -514,6 +551,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       options,
       approvalNote,
       approvalStatus,
+      outcomeNote,
+      outcomeStatus,
       pricingRules,
       proposal,
       recentEstimates,

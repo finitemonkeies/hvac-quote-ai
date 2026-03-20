@@ -35,6 +35,8 @@ create table if not exists public.estimates (
   selected_option_id text,
   approval_status text default 'not-required',
   approval_note text,
+  outcome_status text default 'draft',
+  outcome_note text,
   delivery_method text,
   proposal_company_name text not null,
   proposal_company_email text,
@@ -155,6 +157,12 @@ alter table public.estimates
 
 alter table public.estimates
   add column if not exists approval_note text;
+
+alter table public.estimates
+  add column if not exists outcome_status text default 'draft';
+
+alter table public.estimates
+  add column if not exists outcome_note text;
 
 alter table public.estimate_options
   add column if not exists hard_cost numeric(10,2) not null default 0;

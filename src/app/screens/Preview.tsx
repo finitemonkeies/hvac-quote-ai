@@ -17,6 +17,7 @@ export function Preview() {
     approvalNote,
     approvalStatus,
     draft,
+    outcomeStatus,
     options,
     pricingRules,
     proposal,
@@ -153,6 +154,10 @@ export function Preview() {
             <span className="font-medium text-right text-slate-950">
               {Math.max(draft.targetGrossMargin, pricingRules.marginFloorPercent)}%
             </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span>Proposal status</span>
+            <span className="font-medium text-right capitalize text-slate-950">{outcomeStatus}</span>
           </div>
         </div>
 

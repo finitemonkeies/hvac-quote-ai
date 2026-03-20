@@ -657,6 +657,21 @@ export function Settings() {
                   </div>
                 </div>
 
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-slate-500">Sent proposals</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.sentEstimateCount}</p>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <p className="text-emerald-700">Accepted</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.acceptedEstimateCount}</p>
+                  </div>
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                    <p className="text-rose-700">Lost</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.lostEstimateCount}</p>
+                  </div>
+                </div>
+
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <p className="font-medium text-slate-950">Top recommended vendors</p>
                   <p className="mt-1 text-slate-600">

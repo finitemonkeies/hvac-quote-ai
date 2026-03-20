@@ -105,6 +105,14 @@ export function Home() {
                 const deliverySummary = latestDelivery
                   ? `Last ${latestDelivery.method} to ${latestDelivery.destination || "customer"}`
                   : "Draft saved";
+                const outcomeSummary =
+                  record.outcomeStatus === "accepted"
+                    ? "Accepted"
+                    : record.outcomeStatus === "lost"
+                      ? "Lost"
+                      : record.outcomeStatus === "sent"
+                        ? "Sent"
+                        : "Open draft";
 
                 return (
                   <button
@@ -130,6 +138,7 @@ export function Home() {
                           <p className="mt-1 text-[0.98rem] text-slate-600">
                             {record.draft.homeSize.toLocaleString()} sq ft &bull; {record.draft.systemType}
                           </p>
+                          <p className="mt-1 text-sm font-medium text-slate-700">{outcomeSummary}</p>
                           <p className="mt-1 text-sm text-slate-500">{deliverySummary}</p>
                         </div>
                         <div className="flex items-center gap-3">

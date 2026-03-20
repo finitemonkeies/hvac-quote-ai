@@ -54,6 +54,9 @@ export type QuoteObservabilitySummary = {
   vendorErrorCount: number;
   latestRequestAt: string | null;
   latestFallbackReason: string | null;
+  acceptedEstimateCount: number;
+  lostEstimateCount: number;
+  sentEstimateCount: number;
   topRecommendedVendors: Array<{ name: string; count: number }>;
 };
 
@@ -95,6 +98,8 @@ type EstimateRow = {
   selected_option_id: string | null;
   approval_status: EstimateRecord["approvalStatus"] | null;
   approval_note: string | null;
+  outcome_status: EstimateRecord["outcomeStatus"] | null;
+  outcome_note: string | null;
   delivery_method: EstimateRecord["deliveryMethod"] | null;
   proposal_company_name: string | null;
   proposal_company_email: string | null;
@@ -369,6 +374,8 @@ function mapEstimateRow(row: EstimateRow): EstimateRecord {
     selectedOptionId: row.selected_option_id,
     approvalStatus: row.approval_status ?? "not-required",
     approvalNote: row.approval_note ?? "",
+    outcomeStatus: row.outcome_status ?? "draft",
+    outcomeNote: row.outcome_note ?? "",
     deliveryMethod: row.delivery_method ?? undefined,
     deliveryHistory: snapshot?.deliveryHistory ?? [],
   };
@@ -624,6 +631,8 @@ export async function saveEstimateToSupabase(record: EstimateRecord) {
     selected_option_id: record.selectedOptionId,
     approval_status: record.approvalStatus ?? "not-required",
     approval_note: record.approvalNote || null,
+    outcome_status: record.outcomeStatus ?? "draft",
+    outcome_note: record.outcomeNote || null,
     delivery_method: record.deliveryMethod ?? null,
     proposal_company_name: record.proposal.companyName,
     proposal_company_email: record.proposal.companyEmail,
@@ -696,7 +705,7 @@ export async function fetchRecentEstimatesFromSupabase(limit = 8) {
   const { data, error } = await supabase
     .from("estimates")
     .select(
-      "id, created_at, customer_name, property_address, job_type, system_type, project_scope, notes, selected_option_id, approval_status, approval_note, delivery_method, proposal_company_name, proposal_company_email, proposal_company_phone, estimate_options(level, title, system_name, description, features, estimated_price, price_range_low, price_range_high, is_recommended, hard_cost, gross_margin_percent, policy_status, policy_reason, estimated_monthly_payment, vendor_strategy, vendor_snapshot)",
+      "id, created_at, customer_name, property_address, job_type, system_type, project_scope, notes, selected_option_id, approval_status, approval_note, outcome_status, outcome_note, delivery_method, proposal_company_name, proposal_company_email, proposal_company_phone, estimate_options(level, title, system_name, description, features, estimated_price, price_range_low, price_range_high, is_recommended, hard_cost, gross_margin_percent, policy_status, policy_reason, estimated_monthly_payment, vendor_strategy, vendor_snapshot)",
     )
     .eq("organization_id", profile.organizationId)
     .order("created_at", { ascending: false })
@@ -984,7 +993,7 @@ export async function fetchQuoteObservabilitySummary() {
     return null as QuoteObservabilitySummary | null;
   }
 
-  const [{ data: vendorRows, error: vendorError }, { data: requestRows, error: requestError }] = await Promise.all([
+  const [{ data: vendorRows, error: vendorError }, { data: requestRows, error: requestError }, { data: estimateRows, error: estimateError }] = await Promise.all([
     supabase
       .from("vendors")
       .select("id, connection_status")
@@ -992,6 +1001,12 @@ export async function fetchQuoteObservabilitySummary() {
     supabase
       .from("vendor_quote_requests")
       .select("id, created_at, request_payload")
+      .eq("organization_id", profile.organizationId)
+      .order("created_at", { ascending: false })
+      .limit(25),
+    supabase
+      .from("estimates")
+      .select("id, outcome_status")
       .eq("organization_id", profile.organizationId)
       .order("created_at", { ascending: false })
       .limit(25),
@@ -1005,8 +1020,13 @@ export async function fetchQuoteObservabilitySummary() {
     throw new Error(requestError.message || "Failed to fetch quote observability.");
   }
 
+  if (estimateError) {
+    throw new Error(estimateError.message || "Failed to fetch estimate outcomes.");
+  }
+
   const requests = (requestRows ?? []) as VendorQuoteRequestRow[];
   const vendorStatusRows = (vendorRows ?? []) as Array<{ connection_status: VendorIntegration["connectionStatus"] | null }>;
+  const estimates = (estimateRows ?? []) as Array<{ outcome_status: EstimateRecord["outcomeStatus"] | null }>;
   const vendorWinCounts = new Map<string, number>();
 
   let aiUsedCount = 0;
@@ -1039,6 +1059,9 @@ export async function fetchQuoteObservabilitySummary() {
     vendorErrorCount: vendorStatusRows.filter((vendor) => vendor.connection_status === "error").length,
     latestRequestAt: requests[0]?.created_at ?? null,
     latestFallbackReason,
+    acceptedEstimateCount: estimates.filter((estimate) => estimate.outcome_status === "accepted").length,
+    lostEstimateCount: estimates.filter((estimate) => estimate.outcome_status === "lost").length,
+    sentEstimateCount: estimates.filter((estimate) => estimate.outcome_status === "sent").length,
     topRecommendedVendors: [...vendorWinCounts.entries()]
       .sort((left, right) => right[1] - left[1])
       .slice(0, 3)

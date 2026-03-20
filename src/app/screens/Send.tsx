@@ -20,11 +20,14 @@ export function Send() {
     approvalStatus,
     deliveryHistory,
     draft,
+    outcomeNote,
+    outcomeStatus,
     options,
     pricingRules,
     proposal,
     selectedOptionId,
     saveEstimate,
+    updateOutcome,
   } = useEstimate();
   const [email, setEmail] = useState(draft.customerEmail);
   const [phone, setPhone] = useState(draft.customerPhone);
@@ -76,6 +79,50 @@ export function Send() {
             </p>
           </Card>
         ) : null}
+
+        <Card className="rounded-[28px] border-slate-200 bg-white/90 p-5">
+          <p className="font-semibold text-slate-950">Proposal outcome</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Track whether this proposal is still open, accepted, or lost.
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {[
+              { value: "draft", label: "Open draft" },
+              { value: "accepted", label: "Accepted" },
+              { value: "lost", label: "Lost" },
+            ].map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                variant={outcomeStatus === option.value ? "default" : "outline"}
+                className="h-12 rounded-full"
+                onClick={async () => {
+                  updateOutcome({ status: option.value as typeof outcomeStatus });
+                  await saveEstimate();
+                  setStatus(`Marked proposal as ${option.label.toLowerCase()}.`);
+                  toast.success(`Marked proposal as ${option.label.toLowerCase()}.`);
+                }}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+
+          <div className="mt-4">
+            <Label htmlFor="outcomeNote">Outcome note</Label>
+            <Input
+              id="outcomeNote"
+              value={outcomeNote}
+              onChange={(event) => updateOutcome({ note: event.target.value })}
+              onBlur={() => {
+                void saveEstimate();
+              }}
+              className="mt-2 h-12 rounded-2xl border-slate-200 bg-slate-50"
+              placeholder="Why the homeowner moved forward or why the deal was lost"
+            />
+          </div>
+        </Card>
 
         <Card className="rounded-[28px] border-slate-200 bg-white/90 p-5">
           <div className="flex items-start gap-4">

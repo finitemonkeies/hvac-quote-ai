@@ -109,6 +109,7 @@ export interface VendorIntegrationTestResult {
 
 export type QuotePolicyStatus = "approved" | "needs-approval";
 export type EstimateApprovalStatus = "not-required" | "pending" | "approved";
+export type EstimateOutcomeStatus = "draft" | "sent" | "accepted" | "lost";
 
 export interface QuoteOption extends QuoteOptionInput {
   id: string;
@@ -154,6 +155,8 @@ export interface EstimateRecord {
   selectedOptionId: string | null;
   approvalStatus?: EstimateApprovalStatus;
   approvalNote?: string;
+  outcomeStatus?: EstimateOutcomeStatus;
+  outcomeNote?: string;
   deliveryMethod?: DeliveryMethod;
   deliveryHistory: ProposalDeliveryEvent[];
 }
