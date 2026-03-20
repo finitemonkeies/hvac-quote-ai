@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Mail, MessageSquare, Printer, Share2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { AppShell } from "../components/AppShell";
 import { StepHeader } from "../components/StepHeader";
 import { Button } from "../components/ui/button";
@@ -38,6 +39,10 @@ export function Send() {
   if (!selected) {
     return null;
   }
+
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback;
+
   const requiresApproval = selected.policyStatus === "needs-approval";
   const canDeliver = !requiresApproval || approvalStatus === "approved";
 
@@ -99,10 +104,11 @@ export function Send() {
                       selectedOptionId,
                     });
                     setStatus("Proposal email sent.");
+                    toast.success("Proposal email sent.");
                   } catch (error) {
-                    const message =
-                      error instanceof Error ? error.message : "Failed to send proposal email.";
+                    const message = getErrorMessage(error, "Failed to send proposal email.");
                     setStatus(message);
+                    toast.error(message);
                   } finally {
                     setIsSendingEmail(false);
                   }
@@ -141,6 +147,7 @@ export function Send() {
                   await saveEstimate("sms");
                   window.location.href = `sms:${phone}?body=${encodedSummary}`;
                   setStatus("Opened messaging app.");
+                  toast.success("Opened messaging app.");
                 }}
                 disabled={!phone || !canDeliver}
               >
@@ -159,6 +166,7 @@ export function Send() {
                 await saveEstimate("download");
                 downloadProposalPdf(draft, pricingRules, proposal, options, selectedOptionId);
                 setStatus("Opened print dialog for PDF export.");
+                toast.success("Opened PDF export.");
               }}
               disabled={!canDeliver}
             >
@@ -173,10 +181,12 @@ export function Send() {
                 if (shared) {
                   await saveEstimate("share");
                   setStatus("Shared proposal.");
+                  toast.success("Shared proposal.");
                   return;
                 }
 
                 setStatus("Share is not available on this device.");
+                toast.error("Share is not available on this device.");
               }}
               disabled={!canDeliver}
             >

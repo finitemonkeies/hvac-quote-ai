@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Building2, Copy, Users } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "../components/AppShell";
 import { StepHeader } from "../components/StepHeader";
 import { Button } from "../components/ui/button";
@@ -23,10 +24,69 @@ export function Settings() {
   const [workspaceName, setWorkspaceName] = useState(profile?.organizationName ?? "");
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const [isJoiningWorkspace, setIsJoiningWorkspace] = useState(false);
 
   useEffect(() => {
     setWorkspaceName(profile?.organizationName ?? "");
   }, [profile?.organizationName]);
+
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback;
+
+  const handleWorkspaceNameBlur = async () => {
+    if (!workspaceName.trim() || workspaceName === profile?.organizationName) {
+      return;
+    }
+
+    try {
+      await updateWorkspace({ name: workspaceName.trim() });
+      toast.success("Workspace updated.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not update workspace."));
+    }
+  };
+
+  const handleCopyJoinCode = async () => {
+    if (!profile?.organizationJoinCode) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(profile.organizationJoinCode);
+      setCopyStatus("Join code copied.");
+      toast.success("Join code copied.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not copy the join code."));
+    }
+  };
+
+  const handleJoinWorkspace = async () => {
+    const joinCode = joinCodeInput.trim();
+    if (!joinCode) {
+      return;
+    }
+
+    setIsJoiningWorkspace(true);
+
+    try {
+      await joinWorkspace(joinCode);
+      setJoinCodeInput("");
+      toast.success("Joined workspace.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not join that workspace."));
+    } finally {
+      setIsJoiningWorkspace(false);
+    }
+  };
+
+  const handleRefreshMembers = async () => {
+    try {
+      await refreshMembers();
+      toast.success("Workspace team refreshed.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not refresh workspace members."));
+    }
+  };
 
   return (
     <AppShell>
@@ -55,11 +115,7 @@ export function Settings() {
                 id="workspaceName"
                 value={workspaceName}
                 onChange={(event) => setWorkspaceName(event.target.value)}
-                onBlur={() => {
-                  if (workspaceName.trim() && workspaceName !== profile?.organizationName) {
-                    void updateWorkspace({ name: workspaceName.trim() });
-                  }
-                }}
+                onBlur={() => void handleWorkspaceNameBlur()}
                 className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
                 placeholder="Northwind Heating & Air"
               />
@@ -78,14 +134,7 @@ export function Settings() {
                     type="button"
                     variant="outline"
                     className="h-12 rounded-xl border-slate-200 px-4"
-                    onClick={async () => {
-                      if (!profile?.organizationJoinCode) {
-                        return;
-                      }
-
-                      await navigator.clipboard.writeText(profile.organizationJoinCode);
-                      setCopyStatus("Join code copied.");
-                    }}
+                    onClick={() => void handleCopyJoinCode()}
                   >
                     <Copy className="size-4" />
                   </Button>
@@ -98,12 +147,7 @@ export function Settings() {
                   id="joinWorkspace"
                   value={joinCodeInput}
                   onChange={(event) => setJoinCodeInput(event.target.value.toUpperCase())}
-                  onBlur={() => {
-                    if (joinCodeInput.trim()) {
-                      void joinWorkspace(joinCodeInput.trim());
-                      setJoinCodeInput("");
-                    }
-                  }}
+                  onBlur={() => void handleJoinWorkspace()}
                   className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
                   placeholder="AB12CD34"
                 />
@@ -112,7 +156,17 @@ export function Settings() {
 
             <div className="space-y-2">
               <Label>Access role</Label>
-              <Select value={profile?.role ?? "manager"} onValueChange={(role) => void setRole(role as "manager" | "rep")}>
+              <Select
+                value={profile?.role ?? "manager"}
+                onValueChange={async (role) => {
+                  try {
+                    await setRole(role as "manager" | "rep");
+                    toast.success("Access role updated.");
+                  } catch (error) {
+                    toast.error(getErrorMessage(error, "Could not update your role."));
+                  }
+                }}
+              >
                 <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none">
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
@@ -200,7 +254,13 @@ export function Settings() {
                 </p>
               </div>
             </div>
-            <Button type="button" variant="outline" className="h-10 rounded-xl border-slate-200 px-4" onClick={() => void refreshMembers()}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 rounded-xl border-slate-200 px-4"
+              onClick={() => void handleRefreshMembers()}
+              disabled={isJoiningWorkspace}
+            >
               Refresh
             </Button>
           </div>
@@ -216,7 +276,14 @@ export function Settings() {
                   <div className="w-[140px]">
                     <Select
                       value={member.role}
-                      onValueChange={(role) => void updateMemberRole(member.id, role as "manager" | "rep")}
+                      onValueChange={async (role) => {
+                        try {
+                          await updateMemberRole(member.id, role as "manager" | "rep");
+                          toast.success("Team member role updated.");
+                        } catch (error) {
+                          toast.error(getErrorMessage(error, "Could not update team member role."));
+                        }
+                      }}
                     >
                       <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-slate-50 shadow-none">
                         <SelectValue placeholder="Select role" />

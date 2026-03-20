@@ -182,6 +182,18 @@ function buildHtml(payload: ProposalPayload) {
 }
 
 function buildText(payload: ProposalPayload) {
+  const selected = payload.options.find((option) => option.id === payload.selectedOptionId) ?? null;
+  const monthlyPayment =
+    payload.draft.financingEnabled && selected
+      ? Math.round(
+          calculateMonthlyPayment(
+            selected.estimatedPrice,
+            payload.pricingRules.defaultFinancingApr,
+            Math.max(payload.draft.financingTermMonths, 1),
+          ),
+        )
+      : null;
+
   return [
     `${payload.proposal.companyName} HVAC Proposal`,
     "",

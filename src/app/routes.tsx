@@ -1,6 +1,7 @@
 import { Suspense, lazy, type ComponentType } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import { ProtectedApp, PublicOnly } from "./components/AuthGate";
+import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 
 function RouteFallback() {
   return (
@@ -44,10 +45,12 @@ const Approvals = lazyRoute(() => import("./screens/Approvals"), "Approvals");
 export const router = createBrowserRouter([
   {
     Component: PublicOnly,
+    errorElement: <RouteErrorBoundary />,
     children: [{ path: "/auth", Component: Auth }],
   },
   {
     Component: ProtectedApp,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { path: "/", Component: Home },
       { path: "/job-setup", Component: NewEstimate },
