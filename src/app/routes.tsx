@@ -41,8 +41,14 @@ const Preview = lazyRoute(() => import("./screens/Preview"), "Preview");
 const Send = lazyRoute(() => import("./screens/Send"), "Send");
 const Settings = lazyRoute(() => import("./screens/Settings"), "Settings");
 const Approvals = lazyRoute(() => import("./screens/Approvals"), "Approvals");
+const ProposalResponse = lazyRoute(() => import("./screens/ProposalResponse"), "ProposalResponse");
 
 export const router = createBrowserRouter([
+  {
+    path: "/proposal/respond",
+    Component: ProposalResponse,
+    errorElement: <RouteErrorBoundary />,
+  },
   {
     Component: PublicOnly,
     errorElement: <RouteErrorBoundary />,

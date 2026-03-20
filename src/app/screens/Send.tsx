@@ -151,7 +151,9 @@ export function Send() {
                   setStatus("");
 
                   try {
+                    const persistedEstimate = await saveEstimate();
                     await sendProposalEmailViaSupabase({
+                      estimateId: persistedEstimate.id,
                       customerEmail: email,
                       draft,
                       pricingRules,

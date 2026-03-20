@@ -123,6 +123,18 @@ create table if not exists public.vendor_quote_items (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.proposal_response_tokens (
+  id uuid primary key default gen_random_uuid(),
+  estimate_id uuid not null references public.estimates (id) on delete cascade,
+  organization_id uuid not null references public.organizations (id) on delete cascade,
+  token text not null unique,
+  customer_email text,
+  created_at timestamptz not null default now(),
+  responded_at timestamptz,
+  response_status text,
+  response_note text
+);
+
 create table if not exists public.pricing_rules (
   organization_id uuid primary key references public.organizations (id) on delete cascade,
   labor_rate_per_hour numeric(10,2) not null default 125,
@@ -210,6 +222,7 @@ alter table public.vendors enable row level security;
 alter table public.vendor_products enable row level security;
 alter table public.vendor_quote_requests enable row level security;
 alter table public.vendor_quote_items enable row level security;
+alter table public.proposal_response_tokens enable row level security;
 
 create policy "Users can view own organization"
 on public.organizations
@@ -492,6 +505,18 @@ using (
     join public.users on users.organization_id = vendor_quote_requests.organization_id
     where vendor_quote_requests.id = vendor_quote_items.request_id
       and users.id = auth.uid()
+  )
+);
+
+create policy "Organization members can view proposal response tokens"
+on public.proposal_response_tokens
+for select
+using (
+  exists (
+    select 1
+    from public.users
+    where users.id = auth.uid()
+      and users.organization_id = proposal_response_tokens.organization_id
   )
 );
 

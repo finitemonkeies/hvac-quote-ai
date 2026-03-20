@@ -1,3 +1,5 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.56.0";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -18,6 +20,7 @@ type QuoteOption = {
 };
 
 type ProposalPayload = {
+  estimateId: string;
   customerEmail: string;
   draft: {
     customerName: string;
@@ -221,8 +224,18 @@ async function requireAuthenticatedUser(request: Request) {
   }
 }
 
-function buildHtml(payload: ProposalPayload) {
+function buildResponseLinks(payload: ProposalPayload, token: string) {
+  const appUrl = Deno.env.get("PUBLIC_APP_URL") ?? "https://hvacquote.pro";
+  const baseUrl = appUrl.replace(/\/$/, "");
+  return {
+    acceptUrl: `${baseUrl}/proposal/respond?token=${encodeURIComponent(token)}&decision=accepted`,
+    declineUrl: `${baseUrl}/proposal/respond?token=${encodeURIComponent(token)}&decision=lost`,
+  };
+}
+
+function buildHtml(payload: ProposalPayload, token: string) {
   const selected = payload.options.find((option) => option.id === payload.selectedOptionId) ?? null;
+  const { acceptUrl, declineUrl } = buildResponseLinks(payload, token);
   const monthlyPayment =
     payload.draft.financingEnabled && selected
       ? Math.round(
@@ -324,6 +337,20 @@ function buildHtml(payload: ProposalPayload) {
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;">
                       ${payload.options.map((option) => renderOptionCard(option, selected?.id ?? null)).join("")}
                     </table>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;margin-top:16px;">
+                      <tr>
+                        <td style="padding:0 8px 0 0;" width="50%">
+                          <a href="${acceptUrl}" style="display:block;width:100%;background:#0f766e;color:#ffffff;text-decoration:none;text-align:center;border-radius:999px;padding:14px 16px;font-size:14px;font-weight:700;">
+                            Accept Proposal
+                          </a>
+                        </td>
+                        <td style="padding:0 0 0 8px;" width="50%">
+                          <a href="${declineUrl}" style="display:block;width:100%;background:#ffffff;color:#475569;text-decoration:none;text-align:center;border:1px solid #cbd5e1;border-radius:999px;padding:14px 16px;font-size:14px;font-weight:700;">
+                            Decline Proposal
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
                     <div style="padding-top:8px;font-size:13px;line-height:20px;color:#64748b;">
                       Pricing reflects the scope and assumptions discussed on site. Reply to this email if you would like to adjust equipment, accessories, or financing.
                     </div>
@@ -338,8 +365,9 @@ function buildHtml(payload: ProposalPayload) {
   `;
 }
 
-function buildText(payload: ProposalPayload) {
+function buildText(payload: ProposalPayload, token: string) {
   const selected = payload.options.find((option) => option.id === payload.selectedOptionId) ?? null;
+  const { acceptUrl, declineUrl } = buildResponseLinks(payload, token);
   const monthlyPayment =
     payload.draft.financingEnabled && selected
       ? Math.round(
@@ -390,6 +418,8 @@ function buildText(payload: ProposalPayload) {
       ...option.features.map((feature) => `- ${feature}`),
       "",
     ]),
+    `Accept proposal: ${acceptUrl}`,
+    `Decline proposal: ${declineUrl}`,
   ].join("\n");
 }
 
@@ -403,15 +433,56 @@ Deno.serve(async (request) => {
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "quotes@hvacquote.pro";
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!resendApiKey) {
       throw new Error("Missing RESEND_API_KEY secret.");
+    }
+
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      throw new Error("Missing Supabase admin configuration.");
     }
 
     const payload = (await request.json()) as ProposalPayload;
 
     if (!payload.customerEmail) {
       throw new Error("Customer email is required.");
+    }
+
+    const authorization = request.headers.get("Authorization") ?? request.headers.get("authorization");
+    const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, { auth: { persistSession: false } });
+    const token = authorization?.replace("Bearer ", "") ?? "";
+    const { data: authData } = await adminClient.auth.getUser(token);
+    const userId = authData.user?.id ?? null;
+
+    if (!userId) {
+      throw new Error("Unable to resolve current user.");
+    }
+
+    const { data: userRow } = await adminClient
+      .from("users")
+      .select("organization_id")
+      .eq("id", userId)
+      .maybeSingle();
+
+    const organizationId = (userRow?.organization_id as string | null) ?? null;
+
+    if (!organizationId) {
+      throw new Error("Unable to resolve workspace for proposal send.");
+    }
+
+    const responseToken = crypto.randomUUID().replaceAll("-", "");
+    const { error: tokenError } = await adminClient.from("proposal_response_tokens").insert({
+      estimate_id: payload.estimateId,
+      organization_id: organizationId,
+      token: responseToken,
+      customer_email: payload.customerEmail,
+      response_status: "pending",
+    });
+
+    if (tokenError) {
+      throw new Error(tokenError.message || "Failed to create proposal response token.");
     }
 
     const response = await fetch("https://api.resend.com/emails", {
@@ -426,14 +497,16 @@ Deno.serve(async (request) => {
         to: [payload.customerEmail],
         reply_to: payload.proposal.companyEmail || undefined,
         subject: `${payload.proposal.companyName} proposal for ${payload.draft.customerName || "your project"}`,
-        html: buildHtml(payload),
-        text: buildText(payload),
+        html: buildHtml(payload, responseToken),
+        text: buildText(payload, responseToken),
       }),
     });
 
     const data = await response.json();
 
     if (!response.ok) {
+      await adminClient.from("proposal_response_tokens").delete().eq("token", responseToken);
+
       const detailedError =
         data?.message ||
         data?.error ||

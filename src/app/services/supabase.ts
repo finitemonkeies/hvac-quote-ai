@@ -855,6 +855,39 @@ export async function testVendorIntegrationViaSupabase(input: {
   return result;
 }
 
+export async function submitProposalResponse(input: {
+  token: string;
+  decision: "accepted" | "lost";
+  note?: string;
+}) {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/proposal-response`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: supabaseAnonKey,
+    },
+    body: JSON.stringify(input),
+  });
+
+  let payload: { success?: boolean; status?: string; error?: string } | null = null;
+
+  try {
+    payload = (await response.json()) as { success?: boolean; status?: string; error?: string };
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok || payload.error) {
+    throw new Error(payload?.error || "Failed to submit proposal response.");
+  }
+
+  return payload;
+}
+
 export async function savePricingRulesToSupabase(pricingRules: PricingRules) {
   if (!supabase) {
     return { persisted: false };
@@ -888,6 +921,7 @@ export async function savePricingRulesToSupabase(pricingRules: PricingRules) {
 }
 
 export async function sendProposalEmailViaSupabase(input: {
+  estimateId: string;
   customerEmail: string;
   draft: EstimateDraft;
   pricingRules: PricingRules;
