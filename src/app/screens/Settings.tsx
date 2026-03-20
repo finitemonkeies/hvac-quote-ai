@@ -21,8 +21,9 @@ import {
   fetchLatestVendorQuoteRequestSummary,
   generateQuoteOptionsViaSupabase,
   saveVendorIntegrationToSupabase,
+  testVendorIntegrationViaSupabase,
 } from "../services/supabase";
-import type { VendorIntegration } from "../types/estimate";
+import type { VendorIntegration, VendorIntegrationTestResult } from "../types/estimate";
 
 type SmokeTestResult = {
   optionCount: number;
@@ -47,6 +48,8 @@ export function Settings() {
   const [vendors, setVendors] = useState<VendorIntegration[]>([]);
   const [isLoadingVendors, setIsLoadingVendors] = useState(false);
   const [savingVendorId, setSavingVendorId] = useState<string | null>(null);
+  const [testingVendorId, setTestingVendorId] = useState<string | null>(null);
+  const [vendorTestResults, setVendorTestResults] = useState<Record<string, VendorIntegrationTestResult>>({});
 
   useEffect(() => {
     setWorkspaceName(profile?.organizationName ?? "");
@@ -199,6 +202,26 @@ export function Settings() {
       toast.error(getErrorMessage(error, "Could not save vendor integration."));
     } finally {
       setSavingVendorId(null);
+    }
+  };
+
+  const handleVendorTest = async (vendor: VendorIntegration) => {
+    setTestingVendorId(vendor.id);
+
+    try {
+      const result = await testVendorIntegrationViaSupabase({
+        vendorId: vendor.id,
+        draft,
+        pricingRules,
+      });
+      setVendorTestResults((current) => ({ ...current, [vendor.id]: result }));
+      const refreshed = await fetchVendorIntegrationsFromSupabase();
+      setVendors(refreshed);
+      toast.success(`${vendor.name} test completed.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not test vendor integration."));
+    } finally {
+      setTestingVendorId(null);
     }
   };
 
@@ -569,6 +592,12 @@ export function Settings() {
               ) : (
                 vendors.map((vendor) => (
                   <div key={vendor.id} className="rounded-2xl border border-slate-200 p-4">
+                    {vendor.slug === "supply-pro" ? (
+                      <div className="mb-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                        First live adapter target.
+                        Use `manual-api`, set the adapter endpoint, then add the Supabase secret `VENDOR_SUPPLY_PRO_API_KEY`.
+                      </div>
+                    ) : null}
                     <div className="flex items-start justify-between gap-4">
                       <div>
                         <p className="font-semibold text-slate-950">{vendor.name}</p>
@@ -579,15 +608,26 @@ export function Settings() {
                           <p className="mt-1 text-sm text-rose-600">{vendor.lastError}</p>
                         ) : null}
                       </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-10 rounded-xl border-slate-200 px-4"
-                        onClick={() => void handleVendorSave(vendor)}
-                        disabled={savingVendorId === vendor.id}
-                      >
-                        {savingVendorId === vendor.id ? "Saving..." : "Save"}
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-10 rounded-xl border-slate-200 px-4"
+                          onClick={() => void handleVendorTest(vendor)}
+                          disabled={testingVendorId === vendor.id}
+                        >
+                          {testingVendorId === vendor.id ? "Testing..." : "Test"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-10 rounded-xl border-slate-200 px-4"
+                          onClick={() => void handleVendorSave(vendor)}
+                          disabled={savingVendorId === vendor.id}
+                        >
+                          {savingVendorId === vendor.id ? "Saving..." : "Save"}
+                        </Button>
+                      </div>
                     </div>
 
                     <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -714,6 +754,22 @@ export function Settings() {
                         />
                       </div>
                     </div>
+
+                    {vendorTestResults[vendor.id] ? (
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                        <p className="font-medium text-slate-950">Last test</p>
+                        <p className="mt-1">Checked at {vendorTestResults[vendor.id].checkedAt}</p>
+                        <p className="mt-1">Mode: {vendorTestResults[vendor.id].mode}</p>
+                        <p className="mt-1">Endpoint: {vendorTestResults[vendor.id].endpointUrl || "Not configured"}</p>
+                        <p className="mt-1">
+                          Secret configured: {vendorTestResults[vendor.id].secretConfigured ? "Yes" : "No"}
+                        </p>
+                        <p className="mt-1">
+                          Product count returned: {vendorTestResults[vendor.id].productCount}
+                        </p>
+                        <p className="mt-1">{vendorTestResults[vendor.id].message}</p>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}

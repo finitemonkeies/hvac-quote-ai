@@ -7,6 +7,7 @@ import type {
   ProposalCompany,
   QuoteOption,
   VendorIntegration,
+  VendorIntegrationTestResult,
   VendorComparison,
 } from "../types/estimate";
 
@@ -756,6 +757,36 @@ export async function saveVendorIntegrationToSupabase(vendor: VendorIntegration)
   }
 
   return { persisted: true };
+}
+
+export async function testVendorIntegrationViaSupabase(input: {
+  vendorId: string;
+  draft: EstimateDraft;
+  pricingRules: PricingRules;
+}) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { data, error } = await supabase.functions.invoke("generate-quotes", {
+    body: {
+      mode: "vendor-health-check",
+      vendorId: input.vendorId,
+      draft: input.draft,
+      pricingRules: input.pricingRules,
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message || "Failed to test vendor integration.");
+  }
+
+  const result = data as VendorIntegrationTestResult | null;
+  if (!result?.vendorId) {
+    throw new Error("Vendor test returned an invalid payload.");
+  }
+
+  return result;
 }
 
 export async function savePricingRulesToSupabase(pricingRules: PricingRules) {

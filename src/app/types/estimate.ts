@@ -95,6 +95,18 @@ export interface VendorIntegration {
   lastError: string | null;
 }
 
+export interface VendorIntegrationTestResult {
+  vendorId: string;
+  vendorName: string;
+  status: VendorConnectionStatus;
+  checkedAt: string;
+  message: string;
+  endpointUrl: string;
+  secretConfigured: boolean;
+  mode: VendorIntegrationMode;
+  productCount: number;
+}
+
 export type QuotePolicyStatus = "approved" | "needs-approval";
 export type EstimateApprovalStatus = "not-required" | "pending" | "approved";
 

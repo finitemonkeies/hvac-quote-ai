@@ -142,6 +142,8 @@ type VendorRow = {
 };
 
 type ManualApiVendorResponse = {
+  status?: "ok" | "error";
+  message?: string;
   products?: Array<{
     brand?: string;
     modelFamily?: string;
@@ -152,6 +154,18 @@ type ManualApiVendorResponse = {
     rebateAmount?: number;
     notes?: string;
   }>;
+};
+
+type VendorHealthCheckResult = {
+  vendorId: string;
+  vendorName: string;
+  status: "connected" | "needs-setup" | "error";
+  checkedAt: string;
+  message: string;
+  endpointUrl: string;
+  secretConfigured: boolean;
+  mode: VendorRow["integration_mode"];
+  productCount: number;
 };
 
 const fallbackVendorProducts: VendorProductRow[] = [
@@ -484,6 +498,80 @@ function sortVendors(left: VendorRow, right: VendorRow) {
   return (left.priority ?? 100) - (right.priority ?? 100);
 }
 
+function getVendorSecretKeyName(vendor: VendorRow) {
+  return `VENDOR_${vendor.slug.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+}
+
+function buildSupplyProAdapterPayload(
+  operation: "health-check" | "quote-request",
+  vendor: VendorRow,
+  draft: EstimateDraft,
+  pricingRules: PricingRules,
+) {
+  return {
+    operation,
+    vendor: {
+      slug: vendor.slug,
+      name: vendor.name,
+      branchCode: vendor.config?.branchCode ?? "",
+      accountNumber: vendor.config?.accountNumber ?? "",
+    },
+    opportunity: {
+      customerName: draft.customerName,
+      propertyAddress: draft.propertyAddress,
+      systemType: draft.systemType,
+      jobType: draft.jobType,
+      tonnage: draft.tonnage,
+      preferredBrand: draft.preferredBrand,
+      installTimeline: draft.installTimeline,
+    },
+    pricingContext: {
+      targetGrossMargin: draft.targetGrossMargin,
+      financingEnabled: draft.financingEnabled,
+      financingTermMonths: draft.financingTermMonths,
+      laborRatePerHour: pricingRules.laborRatePerHour,
+    },
+    estimate: draft,
+  };
+}
+
+function buildGenericVendorAdapterPayload(
+  operation: "health-check" | "quote-request",
+  vendor: VendorRow,
+  draft: EstimateDraft,
+  pricingRules: PricingRules,
+) {
+  if (vendor.slug === "supply-pro") {
+    return buildSupplyProAdapterPayload(operation, vendor, draft, pricingRules);
+  }
+
+  return {
+    operation,
+    vendor: {
+      slug: vendor.slug,
+      branchCode: vendor.config?.branchCode ?? "",
+      accountNumber: vendor.config?.accountNumber ?? "",
+    },
+    draft,
+    pricingRules,
+  };
+}
+
+async function updateVendorConnectionState(
+  adminClient: ReturnType<typeof createClient>,
+  vendorId: string,
+  result: VendorHealthCheckResult,
+) {
+  await adminClient
+    .from("vendors")
+    .update({
+      connection_status: result.status,
+      last_sync_at: result.checkedAt,
+      last_error: result.status === "error" ? result.message : null,
+    })
+    .eq("id", vendorId);
+}
+
 async function fetchManualApiVendorProducts(
   vendor: VendorRow,
   draft: EstimateDraft,
@@ -494,7 +582,7 @@ async function fetchManualApiVendorProducts(
     return [] as VendorProductRow[];
   }
 
-  const secretKeyName = `VENDOR_${vendor.slug.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+  const secretKeyName = getVendorSecretKeyName(vendor);
   const apiKey = Deno.env.get(secretKeyName);
   if (!apiKey) {
     return [] as VendorProductRow[];
@@ -506,15 +594,7 @@ async function fetchManualApiVendorProducts(
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      vendor: {
-        slug: vendor.slug,
-        branchCode: vendor.config?.branchCode ?? "",
-        accountNumber: vendor.config?.accountNumber ?? "",
-      },
-      draft,
-      pricingRules,
-    }),
+    body: JSON.stringify(buildGenericVendorAdapterPayload("quote-request", vendor, draft, pricingRules)),
   });
 
   if (!response.ok) {
@@ -536,6 +616,127 @@ async function fetchManualApiVendorProducts(
     rebate_amount: Number(product.rebateAmount ?? 0),
     notes: product.notes ?? vendor.config?.notes ?? "Live vendor adapter response",
   }));
+}
+
+async function runVendorHealthCheck(
+  adminClient: ReturnType<typeof createClient>,
+  vendor: VendorRow,
+  draft: EstimateDraft,
+  pricingRules: PricingRules,
+) {
+  const checkedAt = new Date().toISOString();
+  const endpointUrl = vendor.config?.endpointUrl?.trim() ?? "";
+  const secretConfigured = Boolean(Deno.env.get(getVendorSecretKeyName(vendor)));
+
+  if (vendor.integration_mode === "mock") {
+    const result: VendorHealthCheckResult = {
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      status: "connected",
+      checkedAt,
+      message: "Mock vendor is active and ready to provide fallback comparisons.",
+      endpointUrl,
+      secretConfigured,
+      mode: vendor.integration_mode,
+      productCount: 3,
+    };
+    await updateVendorConnectionState(adminClient, vendor.id, result);
+    return result;
+  }
+
+  if (!endpointUrl) {
+    const result: VendorHealthCheckResult = {
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      status: "needs-setup",
+      checkedAt,
+      message: "Add an endpoint URL before testing this vendor adapter.",
+      endpointUrl,
+      secretConfigured,
+      mode: vendor.integration_mode,
+      productCount: 0,
+    };
+    await updateVendorConnectionState(adminClient, vendor.id, result);
+    return result;
+  }
+
+  if (!secretConfigured) {
+    const result: VendorHealthCheckResult = {
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      status: "needs-setup",
+      checkedAt,
+      message: `Missing required secret ${getVendorSecretKeyName(vendor)} in Supabase Edge Function secrets.`,
+      endpointUrl,
+      secretConfigured,
+      mode: vendor.integration_mode,
+      productCount: 0,
+    };
+    await updateVendorConnectionState(adminClient, vendor.id, result);
+    return result;
+  }
+
+  try {
+    const response = await fetch(endpointUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get(getVendorSecretKeyName(vendor))}`,
+      },
+      body: JSON.stringify(buildGenericVendorAdapterPayload("health-check", vendor, draft, pricingRules)),
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      const result: VendorHealthCheckResult = {
+        vendorId: vendor.id,
+        vendorName: vendor.name,
+        status: "error",
+        checkedAt,
+        message: message || `Adapter responded with ${response.status}.`,
+        endpointUrl,
+        secretConfigured,
+        mode: vendor.integration_mode,
+        productCount: 0,
+      };
+      await updateVendorConnectionState(adminClient, vendor.id, result);
+      return result;
+    }
+
+    const payload = (await response.json()) as ManualApiVendorResponse;
+    const productCount = Array.isArray(payload.products) ? payload.products.length : 0;
+    const result: VendorHealthCheckResult = {
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      status: payload.status === "error" ? "error" : "connected",
+      checkedAt,
+      message:
+        payload.message ||
+        (productCount > 0
+          ? `Adapter returned ${productCount} product candidates.`
+          : "Adapter responded successfully."),
+      endpointUrl,
+      secretConfigured,
+      mode: vendor.integration_mode,
+      productCount,
+    };
+    await updateVendorConnectionState(adminClient, vendor.id, result);
+    return result;
+  } catch (error) {
+    const result: VendorHealthCheckResult = {
+      vendorId: vendor.id,
+      vendorName: vendor.name,
+      status: "error",
+      checkedAt,
+      message: error instanceof Error ? error.message : "Vendor health check failed.",
+      endpointUrl,
+      secretConfigured,
+      mode: vendor.integration_mode,
+      productCount: 0,
+    };
+    await updateVendorConnectionState(adminClient, vendor.id, result);
+    return result;
+  }
 }
 
 async function resolveVendorProducts(
@@ -954,9 +1155,11 @@ Deno.serve(async (request) => {
   try {
     await requireAuthenticatedUser(request);
 
-    const { draft, pricingRules } = await request.json() as {
+    const { mode, draft, pricingRules, vendorId } = await request.json() as {
+      mode?: "generate-quotes" | "vendor-health-check";
       draft: EstimateDraft;
       pricingRules: PricingRules;
+      vendorId?: string;
     };
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -985,6 +1188,29 @@ Deno.serve(async (request) => {
 
         organizationId = (userRow?.organization_id as string | null) ?? null;
       }
+    }
+
+    if (mode === "vendor-health-check") {
+      if (!adminClient) {
+        return jsonResponse({ error: "Supabase admin client is not configured." }, 500);
+      }
+
+      if (!vendorId) {
+        return jsonResponse({ error: "Vendor id is required for a health check." }, 400);
+      }
+
+      const { data: vendorRow } = await adminClient
+        .from("vendors")
+        .select("id, slug, name, integration_mode, active, priority, config")
+        .eq("id", vendorId)
+        .maybeSingle();
+
+      if (!vendorRow) {
+        return jsonResponse({ error: "Vendor was not found." }, 404);
+      }
+
+      const result = await runVendorHealthCheck(adminClient, vendorRow as VendorRow, draft, pricingRules);
+      return jsonResponse(result);
     }
 
     let vendorProducts: VendorProductRow[] = fallbackVendorProducts;
