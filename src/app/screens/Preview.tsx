@@ -6,12 +6,37 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { formatCurrency } from "../lib/format";
+import { useAuth } from "../lib/auth";
+import { calculateMonthlyPayment, formatCurrency } from "../lib/format";
 import { useEstimate } from "../lib/estimate-store";
 
 export function Preview() {
   const navigate = useNavigate();
-  const { draft, options, proposal, selectedOptionId, selectOption, updateProposal } = useEstimate();
+  const { profile } = useAuth();
+  const {
+    approvalNote,
+    approvalStatus,
+    draft,
+    options,
+    pricingRules,
+    proposal,
+    selectedOptionId,
+    selectOption,
+    updateApproval,
+    updateProposal,
+  } = useEstimate();
+  const selected =
+    options.find((option) => option.id === selectedOptionId) ?? options[1] ?? options[0] ?? null;
+  const estimatedMonthly =
+    draft.financingEnabled && selected
+      ? Math.round(
+          calculateMonthlyPayment(
+            selected.estimatedPrice,
+            pricingRules.defaultFinancingApr,
+            Math.max(draft.financingTermMonths, 1),
+          ),
+        )
+      : null;
 
   useEffect(() => {
     if (options.length === 0) {
@@ -67,6 +92,13 @@ export function Preview() {
           <p className="mt-2 text-sm text-slate-600">
             Prepared for {draft.customerName || "your customer"} at {draft.propertyAddress || "the project site"}.
           </p>
+          {draft.customerPhone || draft.customerEmail ? (
+            <p className="mt-2 text-sm text-slate-600">
+              {draft.customerPhone || "No phone provided"}
+              {draft.customerPhone && draft.customerEmail ? " - " : ""}
+              {draft.customerEmail || ""}
+            </p>
+          ) : null}
         </div>
 
         <div className="grid gap-3 border-b border-slate-200 py-5 text-sm text-slate-700">
@@ -82,7 +114,109 @@ export function Preview() {
             <span>Install scope</span>
             <span className="font-medium text-slate-950">{draft.projectScope}</span>
           </div>
+          <div className="flex justify-between gap-3">
+            <span>Existing system</span>
+            <span className="font-medium text-right text-slate-950">
+              {draft.existingSystemType}
+              {draft.existingSystemAge ? `, ${draft.existingSystemAge}` : ""}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span>Fuel / condition</span>
+            <span className="font-medium text-right text-slate-950">
+              {draft.existingFuelType} • {draft.existingSystemCondition}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span>Access / location</span>
+            <span className="font-medium text-right text-slate-950">
+              {draft.accessDifficulty} • {draft.installLocation}
+            </span>
+          </div>
+          {draft.comfortIssues ? (
+            <div className="flex justify-between gap-3">
+              <span>Comfort notes</span>
+              <span className="max-w-[60%] text-right font-medium text-slate-950">
+                {draft.comfortIssues}
+              </span>
+            </div>
+          ) : null}
+          <div className="flex justify-between gap-3">
+            <span>Package / brand</span>
+            <span className="font-medium text-right text-slate-950">
+              {draft.equipmentPackage} • {draft.preferredBrand}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span>Target margin</span>
+            <span className="font-medium text-right text-slate-950">
+              {Math.max(draft.targetGrossMargin, pricingRules.marginFloorPercent)}%
+            </span>
+          </div>
         </div>
+
+        <div className="grid gap-3 border-b border-slate-200 py-5 text-sm text-slate-700 sm:grid-cols-2">
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Upsells Included</p>
+            <p className="mt-2 font-medium text-slate-950">
+              {[
+                draft.thermostatUpgrade && "Thermostat",
+                draft.iaqBundle && "IAQ",
+                draft.surgeProtection && "Surge",
+                draft.maintenancePlan && "Maintenance",
+                draft.extendedLaborWarranty && "Warranty",
+              ]
+                .filter(Boolean)
+                .join(" • ") || "None selected"}
+            </p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Financing</p>
+            <p className="mt-2 font-medium text-slate-950">
+              {draft.financingEnabled
+                ? `Approx. ${formatCurrency(estimatedMonthly ?? 0)}/mo at ${pricingRules.defaultFinancingApr}% APR for ${draft.financingTermMonths} months`
+                : "Financing hidden for this proposal"}
+            </p>
+          </div>
+        </div>
+
+        {selected?.policyStatus === "needs-approval" ? (
+          <div className="border-b border-slate-200 py-5">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-950">Selected option needs approval</p>
+              <p className="mt-1 text-sm text-amber-800">{selected.policyReason}</p>
+              <div className="mt-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-slate-950">Manager approval received</p>
+                  <p className="text-xs text-slate-600">
+                    {canApprove
+                      ? "Mark approved if you already have a sign-off offline."
+                      : "Only managers can mark this quote approved."}
+                  </p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={approvalStatus === "approved"}
+                  onChange={(event) =>
+                    updateApproval({ status: event.target.checked ? "approved" : "pending" })
+                  }
+                  className="size-4"
+                  disabled={!canApprove}
+                />
+              </div>
+              <div className="mt-4">
+                <Label htmlFor="approvalNote">Approval note</Label>
+                <Input
+                  id="approvalNote"
+                  value={approvalNote}
+                  onChange={(event) => updateApproval({ note: event.target.value })}
+                  className="mt-2 h-12 rounded-2xl border-amber-200 bg-white"
+                  placeholder="Who approved it, or why pricing is below policy"
+                />
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="space-y-4 pt-5">
           {options.map((option) => (
@@ -139,3 +273,4 @@ export function Preview() {
     </AppShell>
   );
 }
+  const canApprove = profile?.role === "manager";

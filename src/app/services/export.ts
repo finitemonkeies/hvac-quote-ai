@@ -1,13 +1,34 @@
-import type { EstimateDraft, ProposalCompany, QuoteOption } from "../types/estimate";
-import { formatCurrency } from "../lib/format";
+import type { EstimateDraft, PricingRules, ProposalCompany, QuoteOption } from "../types/estimate";
+import { calculateMonthlyPayment, formatCurrency } from "../lib/format";
 
 function buildProposalMarkup(
   draft: EstimateDraft,
+  pricingRules: PricingRules,
   proposal: ProposalCompany,
   options: QuoteOption[],
   selectedOptionId: string | null,
 ) {
   const selectedOption = options.find((option) => option.id === selectedOptionId);
+  const monthlyPayment =
+    draft.financingEnabled && selectedOption
+      ? Math.round(
+          calculateMonthlyPayment(
+            selectedOption.estimatedPrice,
+            pricingRules.defaultFinancingApr,
+            Math.max(draft.financingTermMonths, 1),
+          ),
+        )
+      : null;
+  const selectedAddOns =
+    [
+      draft.thermostatUpgrade && "Smart thermostat",
+      draft.iaqBundle && "IAQ bundle",
+      draft.surgeProtection && "Surge protection",
+      draft.maintenancePlan && "Maintenance plan",
+      draft.extendedLaborWarranty && "Extended labor warranty",
+    ]
+      .filter(Boolean)
+      .join(", ") || "None selected";
 
   return `
     <html>
@@ -35,8 +56,18 @@ function buildProposalMarkup(
         <div class="summary">
           <div><strong>Customer</strong><br/>${draft.customerName || "Homeowner"}</div>
           <div><strong>Property</strong><br/>${draft.propertyAddress || "On-site estimate"}</div>
+          <div><strong>Customer phone</strong><br/>${draft.customerPhone || "Not provided"}</div>
+          <div><strong>Customer email</strong><br/>${draft.customerEmail || "Not provided"}</div>
           <div><strong>Job type</strong><br/>${draft.jobType}</div>
           <div><strong>System type</strong><br/>${draft.systemType}</div>
+          <div><strong>Existing system</strong><br/>${draft.existingSystemType}${draft.existingSystemAge ? `, ${draft.existingSystemAge}` : ""}</div>
+          <div><strong>Fuel / condition</strong><br/>${draft.existingFuelType} | ${draft.existingSystemCondition}</div>
+          <div><strong>Access / location</strong><br/>${draft.accessDifficulty} | ${draft.installLocation}</div>
+          <div><strong>Comfort notes</strong><br/>${draft.comfortIssues || "No additional comfort concerns noted"}</div>
+          <div><strong>Package / brand</strong><br/>${draft.equipmentPackage} | ${draft.preferredBrand}</div>
+          <div><strong>Target margin</strong><br/>${Math.max(draft.targetGrossMargin, pricingRules.marginFloorPercent)}%</div>
+          <div><strong>Add-ons</strong><br/>${selectedAddOns}</div>
+          <div><strong>Financing</strong><br/>${draft.financingEnabled && monthlyPayment ? `${formatCurrency(monthlyPayment)} / month at ${pricingRules.defaultFinancingApr}% APR for ${draft.financingTermMonths} months` : "Not shown"}</div>
         </div>
         ${options
           .map(
@@ -66,6 +97,7 @@ function buildProposalMarkup(
 
 export function downloadProposalPdf(
   draft: EstimateDraft,
+  pricingRules: PricingRules,
   proposal: ProposalCompany,
   options: QuoteOption[],
   selectedOptionId: string | null,
@@ -75,7 +107,7 @@ export function downloadProposalPdf(
     return;
   }
 
-  printWindow.document.write(buildProposalMarkup(draft, proposal, options, selectedOptionId));
+  printWindow.document.write(buildProposalMarkup(draft, pricingRules, proposal, options, selectedOptionId));
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();

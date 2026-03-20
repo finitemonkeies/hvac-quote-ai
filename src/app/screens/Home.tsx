@@ -1,4 +1,4 @@
-import { ChevronRight, Clock3, Plus } from "lucide-react";
+import { ChevronRight, Clock3, Plus, Settings, ShieldAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { Button } from "../components/ui/button";
@@ -9,8 +9,9 @@ import { useEstimate } from "../lib/estimate-store";
 
 export function Home() {
   const navigate = useNavigate();
-  const { signOut, user } = useAuth();
+  const { profile, signOut, user } = useAuth();
   const { recentEstimates, loadEstimate, startNewEstimate, isLoadingRecent } = useEstimate();
+  const pendingApprovals = recentEstimates.filter((record) => record.approvalStatus === "pending");
 
   return (
     <AppShell>
@@ -20,16 +21,26 @@ export function Home() {
           <p className="mt-2 text-[1.05rem] text-slate-600">Fast. Professional. On-site.</p>
           <div className="mt-4 flex items-center justify-between gap-3">
             <p className="text-sm text-slate-500">{user?.email}</p>
-            <Button
-              variant="outline"
-              className="h-9 rounded-lg border-slate-200 px-4 text-sm"
-              onClick={async () => {
-                await signOut();
-                navigate("/auth");
-              }}
-            >
-              Sign Out
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="h-9 rounded-lg border-slate-200 px-4 text-sm"
+                onClick={() => navigate("/settings")}
+              >
+                <Settings className="size-4" />
+                Company Profile
+              </Button>
+              <Button
+                variant="outline"
+                className="h-9 rounded-lg border-slate-200 px-4 text-sm"
+                onClick={async () => {
+                  await signOut();
+                  navigate("/auth");
+                }}
+              >
+                Sign Out
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -45,6 +56,29 @@ export function Home() {
           <Plus className="size-5" />
           New Estimate
         </Button>
+
+        {profile?.role === "manager" ? (
+          <button type="button" className="mt-4 w-full text-left" onClick={() => navigate("/approvals")}>
+            <Card className="rounded-[18px] border-amber-200 bg-amber-50 p-4 shadow-none transition-colors hover:border-amber-300">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-white p-2 text-amber-700">
+                    <ShieldAlert className="size-5" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-950">Approval Queue</p>
+                    <p className="text-sm text-slate-600">
+                      {pendingApprovals.length > 0
+                        ? `${pendingApprovals.length} quote(s) waiting for manager review`
+                        : "No quotes currently waiting for approval"}
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className="size-5 text-slate-400" />
+              </div>
+            </Card>
+          </button>
+        ) : null}
 
         <div className="mt-12">
           <div className="mb-5 flex items-center gap-3">

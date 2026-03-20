@@ -5,19 +5,36 @@ import { StepHeader } from "../components/StepHeader";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { cn } from "../components/ui/utils";
 import { useEstimate } from "../lib/estimate-store";
 
 export function Equipment() {
   const navigate = useNavigate();
-  const { draft, generateOptions, isGenerating, updateDraft } = useEstimate();
+  const { draft, generateOptions, isGenerating, pricingRules, updateDraft } = useEstimate();
 
   const tiers = [
     { value: "budget", label: "Budget", note: "Value tier" },
     { value: "standard", label: "Standard", note: "Most popular" },
     { value: "premium", label: "Premium", note: "High efficiency" },
   ] as const;
+  const upsellToggles = [
+    { key: "thermostatUpgrade", label: "Smart thermostat upgrade" },
+    { key: "iaqBundle", label: "Indoor air quality bundle" },
+    { key: "surgeProtection", label: "Compressor / surge protection" },
+    { key: "maintenancePlan", label: "Maintenance plan enrollment" },
+    { key: "extendedLaborWarranty", label: "Extended labor warranty" },
+  ] as const;
+  const packageOptions = ["Matched system", "High-efficiency match", "Value replacement", "Premium comfort package"];
+  const brandOptions = ["Open", "Carrier", "Trane", "Lennox", "Rheem", "Daikin"];
+  const financingTerms = [36, 60, 84, 120];
 
   const isValid = draft.equipmentCost > 0 && draft.laborHours > 0 && draft.materials >= 0;
 
@@ -64,6 +81,46 @@ export function Equipment() {
         </div>
 
         <div className="mt-5 space-y-5">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-[0.98rem] text-slate-900">Equipment Package</Label>
+              <Select
+                value={draft.equipmentPackage}
+                onValueChange={(equipmentPackage) => updateDraft({ equipmentPackage })}
+              >
+                <SelectTrigger className="h-14 rounded-xl border-slate-300 bg-white text-base text-slate-600 shadow-none">
+                  <SelectValue placeholder="Select package" />
+                </SelectTrigger>
+                <SelectContent>
+                  {packageOptions.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[0.98rem] text-slate-900">Preferred Brand</Label>
+              <Select
+                value={draft.preferredBrand}
+                onValueChange={(preferredBrand) => updateDraft({ preferredBrand })}
+              >
+                <SelectTrigger className="h-14 rounded-xl border-slate-300 bg-white text-base text-slate-600 shadow-none">
+                  <SelectValue placeholder="Select brand" />
+                </SelectTrigger>
+                <SelectContent>
+                  {brandOptions.map((brand) => (
+                    <SelectItem key={brand} value={brand}>
+                      {brand}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="equipmentCost" className="text-[0.98rem] text-slate-900">
               Equipment Cost *
@@ -93,7 +150,7 @@ export function Equipment() {
                 className="h-14 rounded-xl border-slate-300 bg-white pr-20 text-base shadow-none"
               />
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
-                @ $125/hr
+                @ ${pricingRules.laborRatePerHour}/hr
               </span>
             </div>
           </div>
@@ -113,6 +170,80 @@ export function Equipment() {
               />
             </div>
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="targetGrossMargin" className="text-[0.98rem] text-slate-900">
+              Target Gross Margin %
+            </Label>
+            <div className="relative">
+              <Input
+                id="targetGrossMargin"
+                type="number"
+                min={0}
+                max={80}
+                value={draft.targetGrossMargin || ""}
+                onChange={(event) =>
+                  updateDraft({ targetGrossMargin: Math.max(0, Number(event.target.value) || 0) })
+                }
+                className="h-14 rounded-xl border-slate-300 bg-white pr-10 text-base shadow-none"
+              />
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">%</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-7 rounded-[20px] border border-slate-200 bg-white p-5">
+          <h2 className="text-[1.02rem] font-semibold text-slate-950">Upsells & Protection</h2>
+          <div className="mt-4 space-y-4">
+            {upsellToggles.map(({ key, label }) => (
+              <div key={key} className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 px-4 py-3">
+                <div>
+                  <p className="font-medium text-slate-950">{label}</p>
+                </div>
+                <Switch
+                  checked={draft[key]}
+                  onCheckedChange={(checked) => updateDraft({ [key]: checked })}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-7 rounded-[20px] border border-slate-200 bg-white p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-[1.02rem] font-semibold text-slate-950">Financing</h2>
+              <p className="mt-1 text-sm text-slate-600">Show estimated monthly payment options in the proposal.</p>
+            </div>
+            <Switch
+              checked={draft.financingEnabled}
+              onCheckedChange={(financingEnabled) => updateDraft({ financingEnabled })}
+            />
+          </div>
+
+          {draft.financingEnabled ? (
+            <div className="mt-4 space-y-2">
+              <Label className="text-[0.98rem] text-slate-900">Financing Term</Label>
+              <Select
+                value={String(draft.financingTermMonths)}
+                onValueChange={(value) => updateDraft({ financingTermMonths: Number(value) })}
+              >
+                <SelectTrigger className="h-14 rounded-xl border-slate-300 bg-white text-base text-slate-600 shadow-none">
+                  <SelectValue placeholder="Select term" />
+                </SelectTrigger>
+                <SelectContent>
+                  {financingTerms.map((term) => (
+                    <SelectItem key={term} value={String(term)}>
+                      {term} months
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">
+                Monthly estimate uses a default APR of {pricingRules.defaultFinancingApr}%.
+              </p>
+            </div>
+          ) : null}
         </div>
       </div>
 

@@ -8,30 +8,63 @@ import {
   type PropsWithChildren,
 } from "react";
 import type {
+  EstimateApprovalStatus,
   EstimateDraft,
   EstimateRecord,
+  PricingRules,
   ProposalCompany,
   QuoteOption,
   QuoteOptionInput,
 } from "../types/estimate";
 import { useAuth } from "./auth";
-import { generateQuoteOptions } from "../services/quote-generator";
-import { fetchRecentEstimatesFromSupabase, saveEstimateToSupabase } from "../services/supabase";
+import { applyQuotePolicy, generateQuoteOptions } from "../services/quote-generator";
+import {
+  fetchPricingRulesFromSupabase,
+  fetchRecentEstimatesFromSupabase,
+  saveEstimateToSupabase,
+  savePricingRulesToSupabase,
+} from "../services/supabase";
 
 const CURRENT_ESTIMATE_KEY = "hvac-quote-ai.current-estimate";
 const CURRENT_ESTIMATE_ID_KEY = "hvac-quote-ai.current-estimate-id";
+const CURRENT_OPTIONS_KEY = "hvac-quote-ai.current-options";
+const CURRENT_PROPOSAL_KEY = "hvac-quote-ai.current-proposal";
+const CURRENT_SELECTED_OPTION_KEY = "hvac-quote-ai.current-selected-option";
+const CURRENT_APPROVAL_STATUS_KEY = "hvac-quote-ai.current-approval-status";
+const CURRENT_APPROVAL_NOTE_KEY = "hvac-quote-ai.current-approval-note";
+const COMPANY_PROFILE_KEY = "hvac-quote-ai.company-profile";
+const PRICING_RULES_KEY = "hvac-quote-ai.pricing-rules";
 const RECENT_ESTIMATES_KEY = "hvac-quote-ai.recent-estimates";
 
 const defaultDraft: EstimateDraft = {
   customerName: "",
+  customerEmail: "",
+  customerPhone: "",
   propertyAddress: "",
   jobType: "Full system replacement",
   systemType: "Split system",
+  existingSystemType: "Split system",
+  existingSystemAge: "",
+  existingFuelType: "Electric",
+  existingSystemCondition: "Aging but operational",
   tier: "standard",
   equipmentCost: 7500,
   laborHours: 10,
   materials: 450,
   projectScope: "Replace existing equipment",
+  installLocation: "Ground level",
+  accessDifficulty: "Standard access",
+  comfortIssues: "",
+  equipmentPackage: "Matched system",
+  preferredBrand: "Open",
+  targetGrossMargin: 45,
+  financingEnabled: true,
+  financingTermMonths: 120,
+  maintenancePlan: false,
+  surgeProtection: false,
+  iaqBundle: false,
+  extendedLaborWarranty: false,
+  thermostatUpgrade: true,
   homeSize: 2200,
   tonnage: "3.0 ton",
   installTimeline: "This week",
@@ -54,20 +87,39 @@ const defaultProposal: ProposalCompany = {
   salespersonName: "Field Technician",
 };
 
+const defaultPricingRules: PricingRules = {
+  laborRatePerHour: 125,
+  marginFloorPercent: 35,
+  maxDiscountPercent: 10,
+  defaultFinancingApr: 9.99,
+  thermostatUpgradePrice: 325,
+  iaqBundlePrice: 1350,
+  surgeProtectionPrice: 425,
+  maintenancePlanPrice: 290,
+  extendedLaborWarrantyPrice: 1150,
+};
+
 interface EstimateContextValue {
   draft: EstimateDraft;
   options: QuoteOption[];
   recentEstimates: EstimateRecord[];
+  companyProfile: ProposalCompany;
+  pricingRules: PricingRules;
   proposal: ProposalCompany;
   selectedOptionId: string | null;
+  approvalStatus: EstimateApprovalStatus;
+  approvalNote: string;
   isGenerating: boolean;
   isLoadingRecent: boolean;
   startNewEstimate: () => void;
   updateDraft: (input: Partial<EstimateDraft>) => void;
+  updateCompanyProfile: (input: Partial<ProposalCompany>) => void;
+  updatePricingRules: (input: Partial<PricingRules>) => void;
   updateProposal: (input: Partial<ProposalCompany>) => void;
   generateOptions: () => Promise<QuoteOption[]>;
   refineOption: (optionId: string, updates: Partial<QuoteOptionInput>) => void;
   selectOption: (optionId: string) => void;
+  updateApproval: (input: { status?: EstimateApprovalStatus; note?: string }) => void;
   loadEstimate: (record: EstimateRecord) => void;
   saveEstimate: (deliveryMethod?: EstimateRecord["deliveryMethod"]) => Promise<EstimateRecord>;
 }
@@ -104,15 +156,29 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   const [draft, setDraft] = useState<EstimateDraft>(() =>
     readStorage(CURRENT_ESTIMATE_KEY, defaultDraft),
   );
-  const [options, setOptions] = useState<QuoteOption[]>([]);
+  const [options, setOptions] = useState<QuoteOption[]>(() => readStorage(CURRENT_OPTIONS_KEY, []));
   const [recentEstimates, setRecentEstimates] = useState<EstimateRecord[]>(() =>
     readStorage(RECENT_ESTIMATES_KEY, []),
   );
-  const [proposal, setProposal] = useState<ProposalCompany>(defaultProposal);
+  const [companyProfile, setCompanyProfile] = useState<ProposalCompany>(() =>
+    readStorage(COMPANY_PROFILE_KEY, defaultProposal),
+  );
+  const [pricingRules, setPricingRules] = useState<PricingRules>(() =>
+    readStorage(PRICING_RULES_KEY, defaultPricingRules),
+  );
+  const [proposal, setProposal] = useState<ProposalCompany>(() =>
+    readStorage(CURRENT_PROPOSAL_KEY, readStorage(COMPANY_PROFILE_KEY, defaultProposal)),
+  );
   const [currentEstimateId, setCurrentEstimateId] = useState<string | null>(() =>
     readStorage<string | null>(CURRENT_ESTIMATE_ID_KEY, null),
   );
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(() =>
+    readStorage<string | null>(CURRENT_SELECTED_OPTION_KEY, null),
+  );
+  const [approvalStatus, setApprovalStatus] = useState<EstimateApprovalStatus>(() =>
+    readStorage<EstimateApprovalStatus>(CURRENT_APPROVAL_STATUS_KEY, "not-required"),
+  );
+  const [approvalNote, setApprovalNote] = useState(() => readStorage(CURRENT_APPROVAL_NOTE_KEY, ""));
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
 
@@ -125,6 +191,47 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   }, [currentEstimateId]);
 
   useEffect(() => {
+    writeStorage(CURRENT_OPTIONS_KEY, options);
+  }, [options]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_PROPOSAL_KEY, proposal);
+  }, [proposal]);
+
+  useEffect(() => {
+    writeStorage(COMPANY_PROFILE_KEY, companyProfile);
+  }, [companyProfile]);
+
+  useEffect(() => {
+    writeStorage(PRICING_RULES_KEY, pricingRules);
+  }, [pricingRules]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_SELECTED_OPTION_KEY, selectedOptionId);
+  }, [selectedOptionId]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_APPROVAL_STATUS_KEY, approvalStatus);
+  }, [approvalStatus]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_APPROVAL_NOTE_KEY, approvalNote);
+  }, [approvalNote]);
+
+  useEffect(() => {
+    if (!user?.email) {
+      return;
+    }
+
+    setCompanyProfile((current) =>
+      current.companyEmail ? current : { ...current, companyEmail: user.email ?? current.companyEmail },
+    );
+    setProposal((current) =>
+      current.companyEmail ? current : { ...current, companyEmail: user.email ?? current.companyEmail },
+    );
+  }, [user?.email]);
+
+  useEffect(() => {
     if (options.length === 0) {
       return;
     }
@@ -132,6 +239,21 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     const recommended = options.find((option) => option.isRecommended) ?? options[1] ?? options[0];
     setSelectedOptionId((current) => current ?? recommended.id);
   }, [options]);
+
+  useEffect(() => {
+    const selected = options.find((option) => option.id === selectedOptionId) ?? null;
+    if (!selected) {
+      return;
+    }
+
+    if (selected.policyStatus === "needs-approval") {
+      setApprovalStatus((current) => (current === "approved" ? current : "pending"));
+      return;
+    }
+
+    setApprovalStatus("not-required");
+    setApprovalNote("");
+  }, [options, selectedOptionId]);
 
   useEffect(() => {
     if (!user) {
@@ -165,15 +287,58 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     };
   }, [user]);
 
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    let active = true;
+
+    fetchPricingRulesFromSupabase()
+      .then((rules) => {
+        if (!active || !rules) {
+          return;
+        }
+
+        setPricingRules(rules);
+      })
+      .catch((error) => {
+        console.warn("Failed to hydrate pricing rules", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
   const startNewEstimate = () => {
     setDraft(defaultDraft);
     setOptions([]);
+    setProposal(companyProfile);
     setSelectedOptionId(null);
+    setApprovalStatus("not-required");
+    setApprovalNote("");
     setCurrentEstimateId(null);
   };
 
   const updateDraft = (input: Partial<EstimateDraft>) => {
     setDraft((current) => ({ ...current, ...input }));
+  };
+
+  const updateCompanyProfile = (input: Partial<ProposalCompany>) => {
+    setCompanyProfile((current) => {
+      const next = { ...current, ...input };
+      setProposal(next);
+      return next;
+    });
+  };
+
+  const updatePricingRules = (input: Partial<PricingRules>) => {
+    setPricingRules((current) => {
+      const next = { ...current, ...input };
+      void savePricingRulesToSupabase(next);
+      return next;
+    });
   };
 
   const updateProposal = (input: Partial<ProposalCompany>) => {
@@ -184,7 +349,7 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setIsGenerating(true);
 
     try {
-      const generated = await generateQuoteOptions(draft);
+      const generated = await generateQuoteOptions(draft, pricingRules);
       setOptions(generated);
       return generated;
     } finally {
@@ -194,25 +359,29 @@ export function EstimateProvider({ children }: PropsWithChildren) {
 
   const refineOption = (optionId: string, updates: Partial<QuoteOptionInput>) => {
     setOptions((current) =>
-      current.map((option) => {
-        if (option.id !== optionId) {
-          return option;
-        }
+      applyQuotePolicy(
+        draft,
+        pricingRules,
+        current.map((option) => {
+          if (option.id !== optionId) {
+            return option;
+          }
 
-        const mergedFeatures = updates.features?.filter(Boolean) ?? option.features;
-        const nextPrice = updates.estimatedPrice ?? option.estimatedPrice;
+          const mergedFeatures = updates.features?.filter(Boolean) ?? option.features;
+          const nextPrice = updates.estimatedPrice ?? option.estimatedPrice;
 
-        return {
-          ...option,
-          ...updates,
-          features: mergedFeatures,
-          estimatedPrice: nextPrice,
-          priceRangeLow:
-            updates.priceRangeLow ?? Math.round(nextPrice * (option.level === "good" ? 0.95 : 0.94)),
-          priceRangeHigh:
-            updates.priceRangeHigh ?? Math.round(nextPrice * (option.level === "best" ? 1.08 : 1.06)),
-        };
-      }),
+          return {
+            ...option,
+            ...updates,
+            features: mergedFeatures,
+            estimatedPrice: nextPrice,
+            priceRangeLow:
+              updates.priceRangeLow ?? Math.round(nextPrice * (option.level === "good" ? 0.95 : 0.94)),
+            priceRangeHigh:
+              updates.priceRangeHigh ?? Math.round(nextPrice * (option.level === "best" ? 1.08 : 1.06)),
+          };
+        }),
+      ),
     );
   };
 
@@ -220,11 +389,23 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setSelectedOptionId(optionId);
   };
 
+  const updateApproval = (input: { status?: EstimateApprovalStatus; note?: string }) => {
+    if (input.status) {
+      setApprovalStatus(input.status);
+    }
+
+    if (input.note !== undefined) {
+      setApprovalNote(input.note);
+    }
+  };
+
   const loadEstimate = (record: EstimateRecord) => {
     setDraft(record.draft);
     setOptions(record.options);
     setProposal(record.proposal);
     setSelectedOptionId(record.selectedOptionId);
+    setApprovalStatus(record.approvalStatus ?? "not-required");
+    setApprovalNote(record.approvalNote ?? "");
     setCurrentEstimateId(record.id);
   };
 
@@ -236,6 +417,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       options,
       proposal,
       selectedOptionId,
+      approvalStatus,
+      approvalNote,
       deliveryMethod,
     };
 
@@ -255,20 +438,39 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       draft,
       options,
       recentEstimates,
+      companyProfile,
+      pricingRules,
       proposal,
       selectedOptionId,
+      approvalStatus,
+      approvalNote,
       isGenerating,
       isLoadingRecent,
       startNewEstimate,
       updateDraft,
+      updateCompanyProfile,
+      updatePricingRules,
       updateProposal,
       generateOptions,
       refineOption,
       selectOption,
+      updateApproval,
       loadEstimate,
       saveEstimate,
     }),
-    [draft, isGenerating, isLoadingRecent, options, proposal, recentEstimates, selectedOptionId],
+    [
+      companyProfile,
+      draft,
+      isGenerating,
+      isLoadingRecent,
+      options,
+      approvalNote,
+      approvalStatus,
+      pricingRules,
+      proposal,
+      recentEstimates,
+      selectedOptionId,
+    ],
   );
 
   return createElement(EstimateContext.Provider, { value }, children);

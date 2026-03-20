@@ -20,9 +20,38 @@ type ProposalPayload = {
   customerEmail: string;
   draft: {
     customerName: string;
+    customerEmail: string;
+    customerPhone: string;
     propertyAddress: string;
     jobType: string;
     systemType: string;
+    existingSystemType: string;
+    existingSystemAge: string;
+    existingFuelType: string;
+    existingSystemCondition: string;
+    installLocation: string;
+    accessDifficulty: string;
+    comfortIssues: string;
+    equipmentPackage: string;
+    preferredBrand: string;
+    targetGrossMargin: number;
+    financingEnabled: boolean;
+    financingTermMonths: number;
+    maintenancePlan: boolean;
+    surgeProtection: boolean;
+    iaqBundle: boolean;
+    extendedLaborWarranty: boolean;
+    thermostatUpgrade: boolean;
+  };
+  pricingRules: {
+    laborRatePerHour: number;
+    marginFloorPercent: number;
+    defaultFinancingApr: number;
+    thermostatUpgradePrice: number;
+    iaqBundlePrice: number;
+    surgeProtectionPrice: number;
+    maintenancePlanPrice: number;
+    extendedLaborWarrantyPrice: number;
   };
   proposal: {
     companyName: string;
@@ -43,8 +72,42 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function calculateMonthlyPayment(total: number, apr: number, termMonths: number) {
+  if (termMonths <= 0) {
+    return 0;
+  }
+
+  const monthlyRate = apr / 100 / 12;
+  if (monthlyRate <= 0) {
+    return total / termMonths;
+  }
+
+  const factor = Math.pow(1 + monthlyRate, termMonths);
+  return (total * monthlyRate * factor) / (factor - 1);
+}
+
 function buildHtml(payload: ProposalPayload) {
   const selected = payload.options.find((option) => option.id === payload.selectedOptionId) ?? null;
+  const monthlyPayment =
+    payload.draft.financingEnabled && selected
+      ? Math.round(
+          calculateMonthlyPayment(
+            selected.estimatedPrice,
+            payload.pricingRules.defaultFinancingApr,
+            Math.max(payload.draft.financingTermMonths, 1),
+          ),
+        )
+      : null;
+  const selectedAddOns =
+    [
+      payload.draft.thermostatUpgrade && "Smart thermostat",
+      payload.draft.iaqBundle && "IAQ bundle",
+      payload.draft.surgeProtection && "Surge protection",
+      payload.draft.maintenancePlan && "Maintenance plan",
+      payload.draft.extendedLaborWarranty && "Extended labor warranty",
+    ]
+      .filter(Boolean)
+      .join(", ") || "None selected";
 
   return `
     <html>
@@ -61,6 +124,29 @@ function buildHtml(payload: ProposalPayload) {
           <div style="margin-bottom:24px;font-size:15px;line-height:1.6;color:#334155;">
             <p>Hello ${payload.draft.customerName || "there"},</p>
             <p>Please review your HVAC proposal for ${payload.draft.propertyAddress || "your project location"}.</p>
+            ${
+              payload.draft.customerPhone || payload.draft.customerEmail
+                ? `<p style="margin-top:8px;">Contact on file: ${payload.draft.customerPhone || "No phone provided"}${
+                    payload.draft.customerPhone && payload.draft.customerEmail ? " | " : ""
+                  }${payload.draft.customerEmail || ""}</p>`
+                : ""
+            }
+            <p style="margin-top:8px;">Existing equipment: ${payload.draft.existingSystemType}${
+              payload.draft.existingSystemAge ? `, ${payload.draft.existingSystemAge}` : ""
+            } | ${payload.draft.existingFuelType} | ${payload.draft.existingSystemCondition}</p>
+            <p style="margin-top:8px;">Install conditions: ${payload.draft.accessDifficulty} | ${payload.draft.installLocation}</p>
+            <p style="margin-top:8px;">Package / brand: ${payload.draft.equipmentPackage} | ${payload.draft.preferredBrand}</p>
+            <p style="margin-top:8px;">Selected add-ons: ${selectedAddOns}</p>
+            ${
+              payload.draft.financingEnabled && monthlyPayment
+                ? `<p style="margin-top:8px;">Estimated financing: ${formatCurrency(monthlyPayment)} / month at ${payload.pricingRules.defaultFinancingApr}% APR for ${payload.draft.financingTermMonths} months</p>`
+                : ""
+            }
+            ${
+              payload.draft.comfortIssues
+                ? `<p style="margin-top:8px;">Comfort notes: ${payload.draft.comfortIssues}</p>`
+                : ""
+            }
           </div>
 
           <div style="display:grid;gap:14px;">
@@ -101,8 +187,32 @@ function buildText(payload: ProposalPayload) {
     "",
     `Customer: ${payload.draft.customerName || "Customer"}`,
     `Property: ${payload.draft.propertyAddress || "Project site"}`,
+    `Customer Phone: ${payload.draft.customerPhone || "Not provided"}`,
+    `Customer Email: ${payload.draft.customerEmail || "Not provided"}`,
     `Job Type: ${payload.draft.jobType}`,
     `System Type: ${payload.draft.systemType}`,
+    `Existing System: ${payload.draft.existingSystemType}${payload.draft.existingSystemAge ? `, ${payload.draft.existingSystemAge}` : ""}`,
+    `Fuel / Condition: ${payload.draft.existingFuelType} / ${payload.draft.existingSystemCondition}`,
+    `Access / Location: ${payload.draft.accessDifficulty} / ${payload.draft.installLocation}`,
+    `Comfort Notes: ${payload.draft.comfortIssues || "None noted"}`,
+    `Package / Brand: ${payload.draft.equipmentPackage} / ${payload.draft.preferredBrand}`,
+    `Target Margin: ${Math.max(payload.draft.targetGrossMargin, payload.pricingRules.marginFloorPercent)}%`,
+    `Add-ons: ${
+      [
+        payload.draft.thermostatUpgrade && "Smart thermostat",
+        payload.draft.iaqBundle && "IAQ bundle",
+        payload.draft.surgeProtection && "Surge protection",
+        payload.draft.maintenancePlan && "Maintenance plan",
+        payload.draft.extendedLaborWarranty && "Extended labor warranty",
+      ]
+        .filter(Boolean)
+        .join(", ") || "None selected"
+    }`,
+    `Financing: ${
+      payload.draft.financingEnabled && monthlyPayment
+        ? `${formatCurrency(monthlyPayment)} / month at ${payload.pricingRules.defaultFinancingApr}% APR for ${payload.draft.financingTermMonths} months`
+        : "Not shown"
+    }`,
     "",
     ...payload.options.flatMap((option) => [
       `${option.title} - ${option.systemName}`,
@@ -138,11 +248,12 @@ Deno.serve(async (request) => {
       headers: {
         Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json",
+        "User-Agent": "hvac-quote-ai/1.0",
       },
       body: JSON.stringify({
         from: `${payload.proposal.companyName || "HVAC Quote AI"} <${fromEmail}>`,
         to: [payload.customerEmail],
-        reply_to: payload.proposal.companyEmail ? [payload.proposal.companyEmail] : undefined,
+        reply_to: payload.proposal.companyEmail || undefined,
         subject: `${payload.proposal.companyName} proposal for ${payload.draft.customerName || "your project"}`,
         html: buildHtml(payload),
         text: buildText(payload),
@@ -152,7 +263,14 @@ Deno.serve(async (request) => {
     const data = await response.json();
 
     if (!response.ok) {
-      return new Response(JSON.stringify({ error: data?.message || "Resend send failed." }), {
+      const detailedError =
+        data?.message ||
+        data?.error ||
+        data?.name ||
+        JSON.stringify(data) ||
+        "Resend send failed.";
+
+      return new Response(JSON.stringify({ error: detailedError }), {
         status: response.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

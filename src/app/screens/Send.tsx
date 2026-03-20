@@ -13,9 +13,10 @@ import { sendProposalEmailViaSupabase } from "../services/supabase";
 
 export function Send() {
   const navigate = useNavigate();
-  const { draft, options, proposal, selectedOptionId, saveEstimate } = useEstimate();
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
+  const { approvalNote, approvalStatus, draft, options, pricingRules, proposal, selectedOptionId, saveEstimate } =
+    useEstimate();
+  const [email, setEmail] = useState(draft.customerEmail);
+  const [phone, setPhone] = useState(draft.customerPhone);
   const [status, setStatus] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
 
@@ -25,10 +26,20 @@ export function Send() {
     }
   }, [navigate, options.length]);
 
+  useEffect(() => {
+    setEmail((current) => current || draft.customerEmail);
+  }, [draft.customerEmail]);
+
+  useEffect(() => {
+    setPhone((current) => current || draft.customerPhone);
+  }, [draft.customerPhone]);
+
   const selected = options.find((option) => option.id === selectedOptionId) ?? options[1] ?? options[0];
   if (!selected) {
     return null;
   }
+  const requiresApproval = selected.policyStatus === "needs-approval";
+  const canDeliver = !requiresApproval || approvalStatus === "approved";
 
   const encodedSummary = encodeURIComponent(
     `${proposal.companyName} proposal for ${draft.customerName || "your project"}: ${selected.systemName} at ${selected.estimatedPrice}.`,
@@ -39,6 +50,18 @@ export function Send() {
       <StepHeader title="Send / Export" subtitle="Finish" backTo="/preview" />
 
       <div className="space-y-4">
+        {requiresApproval ? (
+          <Card className="rounded-[28px] border-amber-200 bg-amber-50 p-5">
+            <p className="font-semibold text-amber-950">Approval required before delivery</p>
+            <p className="mt-1 text-sm text-amber-800">{selected.policyReason}</p>
+            <p className="mt-2 text-sm text-amber-800">
+              {approvalStatus === "approved"
+                ? `Approved${approvalNote ? `: ${approvalNote}` : "."}`
+                : "Mark this quote approved on the preview screen before sending or sharing it."}
+            </p>
+          </Card>
+        ) : null}
+
         <Card className="rounded-[28px] border-slate-200 bg-white/90 p-5">
           <div className="flex items-start gap-4">
             <div className="rounded-2xl bg-blue-50 p-3 text-blue-700">
@@ -70,6 +93,7 @@ export function Send() {
                     await sendProposalEmailViaSupabase({
                       customerEmail: email,
                       draft,
+                      pricingRules,
                       proposal,
                       options,
                       selectedOptionId,
@@ -83,7 +107,7 @@ export function Send() {
                     setIsSendingEmail(false);
                   }
                 }}
-                disabled={!email || isSendingEmail}
+                disabled={!email || isSendingEmail || !canDeliver}
               >
                 {isSendingEmail ? "Sending..." : "Send by Email"}
               </Button>
@@ -118,7 +142,7 @@ export function Send() {
                   window.location.href = `sms:${phone}?body=${encodedSummary}`;
                   setStatus("Opened messaging app.");
                 }}
-                disabled={!phone}
+                disabled={!phone || !canDeliver}
               >
                 Send by Text
               </Button>
@@ -133,9 +157,10 @@ export function Send() {
               className="h-12 rounded-full border-slate-300"
               onClick={async () => {
                 await saveEstimate("download");
-                downloadProposalPdf(draft, proposal, options, selectedOptionId);
+                downloadProposalPdf(draft, pricingRules, proposal, options, selectedOptionId);
                 setStatus("Opened print dialog for PDF export.");
               }}
+              disabled={!canDeliver}
             >
               <Printer className="size-4" />
               Download PDF
@@ -153,6 +178,7 @@ export function Send() {
 
                 setStatus("Share is not available on this device.");
               }}
+              disabled={!canDeliver}
             >
               <Share2 className="size-4" />
               Share

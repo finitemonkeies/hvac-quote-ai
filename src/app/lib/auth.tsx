@@ -8,15 +8,33 @@ import {
   type PropsWithChildren,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase, upsertUserProfile } from "../services/supabase";
+import {
+  fetchCurrentUserProfile,
+  fetchWorkspaceMembers,
+  joinWorkspaceByCode,
+  supabase,
+  type UserProfile,
+  type WorkspaceMember,
+  updateCurrentWorkspace,
+  updateCurrentUserRole,
+  updateWorkspaceMemberRole,
+  upsertUserProfile,
+} from "../services/supabase";
 
 interface AuthContextValue {
   user: User | null;
+  profile: UserProfile | null;
+  members: WorkspaceMember[];
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  setRole: (role: UserProfile["role"]) => Promise<void>;
+  updateWorkspace: (input: { name?: string }) => Promise<void>;
+  joinWorkspace: (joinCode: string) => Promise<void>;
+  updateMemberRole: (memberId: string, role: WorkspaceMember["role"]) => Promise<void>;
+  refreshMembers: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -24,6 +42,8 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,6 +68,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       if (data.session?.user) {
         await upsertUserProfile(data.session.user);
+        const nextProfile = await fetchCurrentUserProfile();
+        const nextMembers = await fetchWorkspaceMembers();
+        if (active) {
+          setProfile(nextProfile);
+          setMembers(nextMembers);
+        }
+      } else {
+        setProfile(null);
+        setMembers([]);
       }
 
       setLoading(false);
@@ -62,6 +91,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       if (nextSession?.user) {
         void upsertUserProfile(nextSession.user);
+        void fetchCurrentUserProfile().then((nextProfile) => {
+          setProfile(nextProfile);
+        });
+        void fetchWorkspaceMembers().then((nextMembers) => {
+          setMembers(nextMembers);
+        });
+      } else {
+        setProfile(null);
+        setMembers([]);
       }
     });
 
@@ -74,6 +112,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const value = useMemo(
     () => ({
       user,
+      profile,
+      members,
       session,
       loading,
       signIn: async (email: string, password: string) => {
@@ -106,8 +146,36 @@ export function AuthProvider({ children }: PropsWithChildren) {
           throw error;
         }
       },
+      setRole: async (role: UserProfile["role"]) => {
+        await updateCurrentUserRole(role);
+        const nextProfile = await fetchCurrentUserProfile();
+        const nextMembers = await fetchWorkspaceMembers();
+        setProfile(nextProfile);
+        setMembers(nextMembers);
+      },
+      updateWorkspace: async (input: { name?: string }) => {
+        await updateCurrentWorkspace(input);
+        const nextProfile = await fetchCurrentUserProfile();
+        setProfile(nextProfile);
+      },
+      joinWorkspace: async (joinCode: string) => {
+        await joinWorkspaceByCode(joinCode);
+        const nextProfile = await fetchCurrentUserProfile();
+        const nextMembers = await fetchWorkspaceMembers();
+        setProfile(nextProfile);
+        setMembers(nextMembers);
+      },
+      updateMemberRole: async (memberId: string, role: WorkspaceMember["role"]) => {
+        await updateWorkspaceMemberRole(memberId, role);
+        const nextMembers = await fetchWorkspaceMembers();
+        setMembers(nextMembers);
+      },
+      refreshMembers: async () => {
+        const nextMembers = await fetchWorkspaceMembers();
+        setMembers(nextMembers);
+      },
     }),
-    [loading, session, user],
+    [loading, members, profile, session, user],
   );
 
   return createElement(AuthContext.Provider, { value }, children);

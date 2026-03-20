@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { ChevronDown, Sparkles } from "lucide-react";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
@@ -10,9 +10,10 @@ import { useEstimate } from "../lib/estimate-store";
 
 export function Options() {
   const navigate = useNavigate();
-  const { draft, options, selectedOptionId, selectOption } = useEstimate();
+  const { draft, options, pricingRules, selectedOptionId, selectOption } = useEstimate();
   const better = options.find((option) => option.level === "better");
-  const laborCost = draft.laborHours * 125;
+  const flaggedOptions = options.filter((option) => option.policyStatus === "needs-approval");
+  const laborCost = draft.laborHours * pricingRules.laborRatePerHour;
   const baseTotal = draft.equipmentCost + laborCost + draft.materials;
 
   useEffect(() => {
@@ -47,6 +48,15 @@ export function Options() {
           <h2 className="text-[1.15rem] font-semibold text-slate-950">Choose Your Option</h2>
         </div>
 
+        {flaggedOptions.length > 0 ? (
+          <Card className="mt-4 rounded-[18px] border-amber-200 bg-amber-50 p-4 shadow-none">
+            <p className="text-sm font-semibold text-amber-950">Approval required on {flaggedOptions.length} option(s)</p>
+            <p className="mt-1 text-sm text-amber-800">
+              Quotes below the {pricingRules.marginFloorPercent}% margin floor or above the {pricingRules.maxDiscountPercent}% discount limit are flagged for approval.
+            </p>
+          </Card>
+        ) : null}
+
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
           {options.map((option) => (
             <OptionCard
@@ -66,7 +76,7 @@ export function Options() {
         <Card className="mt-6 rounded-[12px] border-slate-200 bg-white p-0 shadow-none">
           <div className="flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-900">
             <span>Cost Breakdown</span>
-            <span className="text-slate-400">⌄</span>
+            <ChevronDown className="size-4 text-slate-400" aria-hidden="true" />
           </div>
           <div className="border-t border-slate-100 px-4 py-4 text-sm text-slate-600">
             <div className="flex justify-between">
@@ -74,7 +84,7 @@ export function Options() {
               <span>{formatCurrency(draft.equipmentCost)}</span>
             </div>
             <div className="mt-2 flex justify-between">
-              <span>Labor ({draft.laborHours} hrs @ $125/hr)</span>
+              <span>Labor ({draft.laborHours} hrs @ ${pricingRules.laborRatePerHour}/hr)</span>
               <span>{formatCurrency(laborCost)}</span>
             </div>
             <div className="mt-2 flex justify-between">

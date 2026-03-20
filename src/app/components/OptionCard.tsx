@@ -1,4 +1,4 @@
-import { Check, PencilLine } from "lucide-react";
+import { AlertTriangle, Check, PencilLine } from "lucide-react";
 import type { QuoteOption } from "../types/estimate";
 import { formatCurrency } from "../lib/format";
 import { Button } from "./ui/button";
@@ -27,6 +27,12 @@ export function OptionCard({ option, isSelected, onSelect, onRefine }: OptionCar
           Recommended
         </div>
       ) : null}
+      {option.policyStatus === "needs-approval" ? (
+        <div className="absolute left-0 top-0 flex items-center gap-1 rounded-br-xl rounded-tl-[18px] bg-amber-500 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-slate-950">
+          <AlertTriangle className="size-3" />
+          Approval
+        </div>
+      ) : null}
 
       <h3 className={cn("text-[1.1rem] font-semibold", option.isRecommended ? "text-[#2f66f5]" : "text-slate-950")}>
         {option.title}
@@ -41,6 +47,29 @@ export function OptionCard({ option, isSelected, onSelect, onRefine }: OptionCar
           {formatCurrency(option.priceRangeLow)} - {formatCurrency(option.priceRangeHigh)}
         </p>
         <p className="mt-1 text-xs font-medium text-slate-500">{option.systemName}</p>
+      </div>
+
+      <div className="mt-4 rounded-2xl bg-slate-50 px-3 py-3 text-xs text-slate-600">
+        <div className="flex justify-between gap-3">
+          <span>Hard cost</span>
+          <span className="font-medium text-slate-950">{formatCurrency(option.hardCost)}</span>
+        </div>
+        <div className="mt-1 flex justify-between gap-3">
+          <span>Gross margin</span>
+          <span className="font-medium text-slate-950">{option.grossMarginPercent}%</span>
+        </div>
+        {option.estimatedMonthlyPayment ? (
+          <div className="mt-1 flex justify-between gap-3">
+            <span>Monthly est.</span>
+            <span className="font-medium text-slate-950">{formatCurrency(option.estimatedMonthlyPayment)}</span>
+          </div>
+        ) : null}
+        {option.policyReason ? (
+          <p className="mt-2 flex items-start gap-2 text-amber-700">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>{option.policyReason}</span>
+          </p>
+        ) : null}
       </div>
 
       <div className="mt-6 space-y-2.5">
