@@ -1,6 +1,8 @@
 export type QuoteLevel = "good" | "better" | "best";
 export type VendorAvailability = "in-stock" | "limited" | "special-order";
 export type DeliveryMethod = "email" | "sms" | "download" | "share";
+export type VendorIntegrationMode = "mock" | "catalog" | "manual-api";
+export type VendorConnectionStatus = "connected" | "needs-setup" | "error";
 
 export interface ProposalDeliveryEvent {
   id: string;
@@ -74,6 +76,23 @@ export interface VendorComparison {
   availability: VendorAvailability;
   rebateAmount: number;
   notes: string;
+}
+
+export interface VendorIntegration {
+  id: string;
+  slug: string;
+  name: string;
+  integrationMode: VendorIntegrationMode;
+  active: boolean;
+  priority: number;
+  endpointUrl: string;
+  branchCode: string;
+  accountNumber: string;
+  supportedSystemTypes: string[];
+  notes: string;
+  connectionStatus: VendorConnectionStatus;
+  lastSyncAt: string | null;
+  lastError: string | null;
 }
 
 export type QuotePolicyStatus = "approved" | "needs-approval";

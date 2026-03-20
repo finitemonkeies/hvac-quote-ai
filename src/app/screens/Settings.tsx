@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Building2, Copy, Users } from "lucide-react";
+import { Building2, Copy, PlugZap, Users } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "../components/AppShell";
 import { StepHeader } from "../components/StepHeader";
@@ -17,9 +17,12 @@ import {
 import { useAuth } from "../lib/auth";
 import { useEstimate } from "../lib/estimate-store";
 import {
+  fetchVendorIntegrationsFromSupabase,
   fetchLatestVendorQuoteRequestSummary,
   generateQuoteOptionsViaSupabase,
+  saveVendorIntegrationToSupabase,
 } from "../services/supabase";
+import type { VendorIntegration } from "../types/estimate";
 
 type SmokeTestResult = {
   optionCount: number;
@@ -41,10 +44,42 @@ export function Settings() {
   const [isJoiningWorkspace, setIsJoiningWorkspace] = useState(false);
   const [isRunningSmokeTest, setIsRunningSmokeTest] = useState(false);
   const [smokeTestResult, setSmokeTestResult] = useState<SmokeTestResult | null>(null);
+  const [vendors, setVendors] = useState<VendorIntegration[]>([]);
+  const [isLoadingVendors, setIsLoadingVendors] = useState(false);
+  const [savingVendorId, setSavingVendorId] = useState<string | null>(null);
 
   useEffect(() => {
     setWorkspaceName(profile?.organizationName ?? "");
   }, [profile?.organizationName]);
+
+  useEffect(() => {
+    if (profile?.role !== "manager") {
+      setVendors([]);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingVendors(true);
+
+    fetchVendorIntegrationsFromSupabase()
+      .then((nextVendors) => {
+        if (active) {
+          setVendors(nextVendors);
+        }
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "Could not load vendor integrations."));
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoadingVendors(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.role]);
 
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
@@ -134,6 +169,36 @@ export function Settings() {
       toast.error(getErrorMessage(error, "Quote backend smoke test failed."));
     } finally {
       setIsRunningSmokeTest(false);
+    }
+  };
+
+  const handleVendorChange = (vendorId: string, updates: Partial<VendorIntegration>) => {
+    setVendors((current) =>
+      current.map((vendor) => (vendor.id === vendorId ? { ...vendor, ...updates } : vendor)),
+    );
+  };
+
+  const handleVendorSystemTypesChange = (vendorId: string, value: string) => {
+    handleVendorChange(vendorId, {
+      supportedSystemTypes: value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    });
+  };
+
+  const handleVendorSave = async (vendor: VendorIntegration) => {
+    setSavingVendorId(vendor.id);
+
+    try {
+      await saveVendorIntegrationToSupabase(vendor);
+      const refreshed = await fetchVendorIntegrationsFromSupabase();
+      setVendors(refreshed);
+      toast.success(`${vendor.name} integration saved.`);
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not save vendor integration."));
+    } finally {
+      setSavingVendorId(null);
     }
   };
 
@@ -481,6 +546,180 @@ export function Settings() {
             </div>
           </div>
         </Card>
+
+        {profile?.role === "manager" ? (
+          <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="rounded-2xl bg-amber-50 p-3 text-amber-700">
+                <PlugZap className="size-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">Vendor Integrations</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Configure supplier connection modes now so real adapters can be plugged in without changing the quote flow.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {isLoadingVendors ? (
+                <p className="text-sm text-slate-500">Loading vendor integrations...</p>
+              ) : vendors.length === 0 ? (
+                <p className="text-sm text-slate-500">No vendor integrations found yet.</p>
+              ) : (
+                vendors.map((vendor) => (
+                  <div key={vendor.id} className="rounded-2xl border border-slate-200 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-semibold text-slate-950">{vendor.name}</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Status: {vendor.connectionStatus === "connected" ? "Connected" : vendor.connectionStatus === "error" ? "Error" : "Needs setup"}
+                        </p>
+                        {vendor.lastError ? (
+                          <p className="mt-1 text-sm text-rose-600">{vendor.lastError}</p>
+                        ) : null}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 rounded-xl border-slate-200 px-4"
+                        onClick={() => void handleVendorSave(vendor)}
+                        disabled={savingVendorId === vendor.id}
+                      >
+                        {savingVendorId === vendor.id ? "Saving..." : "Save"}
+                      </Button>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Integration mode</Label>
+                        <Select
+                          value={vendor.integrationMode}
+                          onValueChange={(value) =>
+                            handleVendorChange(vendor.id, {
+                              integrationMode: value as VendorIntegration["integrationMode"],
+                            })
+                          }
+                        >
+                          <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none">
+                            <SelectValue placeholder="Select mode" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mock">Mock fallback</SelectItem>
+                            <SelectItem value="catalog">Catalog-backed</SelectItem>
+                            <SelectItem value="manual-api">Manual API adapter</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Priority</Label>
+                        <Input
+                          type="number"
+                          value={vendor.priority}
+                          onChange={(event) =>
+                            handleVendorChange(vendor.id, {
+                              priority: Number(event.target.value) || 100,
+                            })
+                          }
+                          className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Endpoint URL</Label>
+                        <Input
+                          value={vendor.endpointUrl}
+                          onChange={(event) =>
+                            handleVendorChange(vendor.id, {
+                              endpointUrl: event.target.value,
+                            })
+                          }
+                          className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
+                          placeholder="https://vendor.example.com/quotes"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Branch code</Label>
+                        <Input
+                          value={vendor.branchCode}
+                          onChange={(event) =>
+                            handleVendorChange(vendor.id, {
+                              branchCode: event.target.value,
+                            })
+                          }
+                          className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
+                          placeholder="DFW-01"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Account number</Label>
+                        <Input
+                          value={vendor.accountNumber}
+                          onChange={(event) =>
+                            handleVendorChange(vendor.id, {
+                              accountNumber: event.target.value,
+                            })
+                          }
+                          className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
+                          placeholder="123456"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Supported system types</Label>
+                        <Input
+                          value={vendor.supportedSystemTypes.join(", ")}
+                          onChange={(event) => handleVendorSystemTypesChange(vendor.id, event.target.value)}
+                          className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
+                          placeholder="Split system, Heat pump"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-4 sm:grid-cols-[120px_1fr]">
+                      <div className="space-y-2">
+                        <Label>Enabled</Label>
+                        <Select
+                          value={vendor.active ? "enabled" : "disabled"}
+                          onValueChange={(value) =>
+                            handleVendorChange(vendor.id, {
+                              active: value === "enabled",
+                            })
+                          }
+                        >
+                          <SelectTrigger className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none">
+                            <SelectValue placeholder="Status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="enabled">Enabled</SelectItem>
+                            <SelectItem value="disabled">Disabled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Manager notes</Label>
+                        <Input
+                          value={vendor.notes}
+                          onChange={(event) =>
+                            handleVendorChange(vendor.id, {
+                              notes: event.target.value,
+                            })
+                          }
+                          className="h-12 rounded-xl border-slate-200 bg-slate-50 shadow-none"
+                          placeholder="Credential lives in Edge Function secret VENDOR_SUPPLY_PRO_API_KEY"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+        ) : null}
 
         {profile?.role === "manager" ? (
           <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">

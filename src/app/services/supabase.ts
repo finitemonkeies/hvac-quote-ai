@@ -6,6 +6,7 @@ import type {
   ProposalDeliveryEvent,
   ProposalCompany,
   QuoteOption,
+  VendorIntegration,
   VendorComparison,
 } from "../types/estimate";
 
@@ -115,6 +116,25 @@ type OrganizationRow = {
   join_code: string;
 };
 
+type VendorRow = {
+  id: string;
+  slug: string;
+  name: string;
+  integration_mode: VendorIntegration["integrationMode"];
+  active: boolean;
+  priority: number | null;
+  config: {
+    endpointUrl?: string;
+    branchCode?: string;
+    accountNumber?: string;
+    supportedSystemTypes?: string[];
+    notes?: string;
+  } | null;
+  connection_status: VendorIntegration["connectionStatus"] | null;
+  last_sync_at: string | null;
+  last_error: string | null;
+};
+
 function buildSnapshot(record: EstimateRecord) {
   const snapshot: EstimateSnapshot = {
     version: 3,
@@ -192,6 +212,25 @@ function mapPricingRulesRow(row: PricingRulesRow): PricingRules {
 
 function createJoinCode() {
   return crypto.randomUUID().split("-")[0].toUpperCase();
+}
+
+function mapVendorRow(row: VendorRow): VendorIntegration {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    integrationMode: row.integration_mode ?? "mock",
+    active: Boolean(row.active),
+    priority: row.priority ?? 100,
+    endpointUrl: row.config?.endpointUrl ?? "",
+    branchCode: row.config?.branchCode ?? "",
+    accountNumber: row.config?.accountNumber ?? "",
+    supportedSystemTypes: Array.isArray(row.config?.supportedSystemTypes) ? row.config.supportedSystemTypes : [],
+    notes: row.config?.notes ?? "",
+    connectionStatus: row.connection_status ?? "needs-setup",
+    lastSyncAt: row.last_sync_at,
+    lastError: row.last_error,
+  };
 }
 
 async function ensureCurrentUserWorkspace(user: User, profile: UserRow | null) {
@@ -660,6 +699,63 @@ export async function fetchPricingRulesFromSupabase() {
   }
 
   return data ? mapPricingRulesRow(data as PricingRulesRow) : null;
+}
+
+export async function fetchVendorIntegrationsFromSupabase() {
+  if (!supabase) {
+    return [] as VendorIntegration[];
+  }
+
+  const { data, error } = await supabase
+    .from("vendors")
+    .select("id, slug, name, integration_mode, active, priority, config, connection_status, last_sync_at, last_error")
+    .order("priority", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.warn("Vendor integration fetch failed", error);
+    return [] as VendorIntegration[];
+  }
+
+  return (data as VendorRow[]).map(mapVendorRow);
+}
+
+export async function saveVendorIntegrationToSupabase(vendor: VendorIntegration) {
+  if (!supabase) {
+    return { persisted: false };
+  }
+
+  const payload = {
+    id: vendor.id,
+    slug: vendor.slug,
+    name: vendor.name,
+    integration_mode: vendor.integrationMode,
+    active: vendor.active,
+    priority: vendor.priority,
+    connection_status:
+      vendor.integrationMode === "mock"
+        ? "connected"
+        : vendor.endpointUrl.trim()
+          ? "connected"
+          : "needs-setup",
+    last_error: null,
+    config: {
+      endpointUrl: vendor.endpointUrl.trim(),
+      branchCode: vendor.branchCode.trim(),
+      accountNumber: vendor.accountNumber.trim(),
+      supportedSystemTypes: vendor.supportedSystemTypes,
+      notes: vendor.notes.trim(),
+    },
+  };
+
+  const { error } = await supabase.from("vendors").upsert(payload);
+
+  if (error) {
+    console.warn("Vendor integration save failed", error);
+    return { persisted: false, error };
+  }
+
+  return { persisted: true };
 }
 
 export async function savePricingRulesToSupabase(pricingRules: PricingRules) {

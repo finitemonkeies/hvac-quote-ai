@@ -1,7 +1,41 @@
-import type { EstimateDraft, PricingRules, QuoteOption, QuoteOptionInput } from "../types/estimate";
 import { calculateMonthlyPayment } from "../lib/format";
+import type { EstimateDraft, PricingRules, QuoteLevel, QuoteOption, QuoteOptionInput } from "../types/estimate";
 import { generateQuoteOptionsViaSupabase, supabase } from "./supabase";
 import { enrichOptionsWithVendorComparisons } from "./vendor-marketplace";
+
+function sanitizeOptions(
+  input: Array<
+    QuoteOptionInput & {
+      level: QuoteLevel;
+    }
+  >,
+) {
+  const order: QuoteLevel[] = ["good", "better", "best"];
+
+  return order.map((level, index) => {
+    const option = input.find((item) => item.level === level) ?? input[index];
+    const safePrice = Math.max(0, Math.round(option?.estimatedPrice ?? 0));
+
+    return {
+      id: level,
+      level,
+      title: level === "good" ? "Good" : level === "better" ? "Better" : "Best",
+      systemName:
+        option?.systemName ??
+        (level === "good"
+          ? "14 SEER2 Comfort System"
+          : level === "better"
+            ? "16 SEER2 Performance System"
+            : "20 SEER2 High Efficiency System"),
+      description: option?.description ?? "",
+      features: (option?.features ?? []).slice(0, 6).filter(Boolean),
+      estimatedPrice: safePrice,
+      priceRangeLow: Math.max(0, Math.round(option?.priceRangeLow ?? safePrice * 0.95)),
+      priceRangeHigh: Math.max(0, Math.round(option?.priceRangeHigh ?? safePrice * 1.06)),
+      isRecommended: level === "best",
+    };
+  });
+}
 
 function calculateBaseHardCost(draft: EstimateDraft, pricingRules: PricingRules) {
   const sizeFactor = Math.max(draft.homeSize, 1200) / 100;
@@ -81,10 +115,13 @@ function calculateBaseHardCost(draft: EstimateDraft, pricingRules: PricingRules)
 export function applyQuotePolicy(
   draft: EstimateDraft,
   pricingRules: PricingRules,
-  options: Array<QuoteOption | QuoteOptionInput & { id: string; level: QuoteOption["level"]; title: string; isRecommended: boolean }>,
+  options: Array<
+    | QuoteOption
+    | (QuoteOptionInput & { id: string; level: QuoteLevel; title: string; isRecommended: boolean })
+  >,
 ): QuoteOption[] {
   const baseHardCost = calculateBaseHardCost(draft, pricingRules);
-  const baselineMultiplierByLevel: Record<QuoteOption["level"], number> = {
+  const baselineMultiplierByLevel: Record<QuoteLevel, number> = {
     good: 0.9,
     better: 1,
     best: 1.24,
@@ -124,6 +161,9 @@ export function applyQuotePolicy(
             ),
           )
         : null,
+      recommendedVendor: "recommendedVendor" in option ? option.recommendedVendor : null,
+      vendorComparisons: "vendorComparisons" in option ? option.vendorComparisons : [],
+      vendorStrategy: "vendorStrategy" in option ? option.vendorStrategy : null,
     };
   });
 }
@@ -169,54 +209,57 @@ function generateFallbackOptions(draft: EstimateDraft, pricingRules: PricingRule
       draft,
       pricingRules,
       sanitizeOptions([
-    {
-      level: "good",
-      systemName: "14 SEER2 Comfort System",
-      description: "Reliable replacement option focused on speed, simplicity, and everyday comfort.",
-      features: [
-        "Single-stage equipment package",
-        "Matched indoor and outdoor system sizing",
-        draft.thermostatUpgrade ? "Entry smart thermostat included" : "Basic programmable thermostat",
-        installNote,
-        accessNote,
-      ],
-      estimatedPrice: goodPrice,
-      priceRangeLow: Math.round(goodPrice * 0.96),
-      priceRangeHigh: Math.round(goodPrice * 1.05),
-    },
-    {
-      level: "better",
-      systemName: "16 SEER2 Performance System",
-      description: "Balanced comfort and efficiency for the homeowner who wants solid long-term value.",
-      features: [
-        "Higher efficiency compressor and blower pairing",
-        draft.thermostatUpgrade ? "Smart thermostat setup and commissioning" : "System setup and commissioning",
-        "Improved airflow tuning for the existing home",
-        packageNote,
-        "Permit coordination and haul-away included",
-        conditionNote,
-        ...upsellFeatures.slice(0, 1),
-      ],
-      estimatedPrice: betterPrice,
-      priceRangeLow: Math.round(betterPrice * 0.95),
-      priceRangeHigh: Math.round(betterPrice * 1.06),
-    },
-    {
-      level: "best",
-      systemName: "20 SEER2 High Efficiency System",
-      description: "Premium comfort package with quieter operation, stronger humidity control, and top-end efficiency.",
-      features: [
-        "Variable-speed indoor comfort performance",
-        "Enhanced humidity and airflow control",
-        draft.thermostatUpgrade ? "Smart thermostat with homeowner orientation" : "Premium control setup and homeowner orientation",
-        "Higher-efficiency filtration and startup testing",
-        comfortNote,
-        ...upsellFeatures.slice(0, 2),
-      ],
-      estimatedPrice: bestPrice,
-      priceRangeLow: Math.round(bestPrice * 0.95),
-      priceRangeHigh: Math.round(bestPrice * 1.08),
-    },
+        {
+          level: "good",
+          systemName: "14 SEER2 Comfort System",
+          description: "Reliable replacement option focused on speed, simplicity, and everyday comfort.",
+          features: [
+            "Single-stage equipment package",
+            "Matched indoor and outdoor system sizing",
+            draft.thermostatUpgrade ? "Entry smart thermostat included" : "Basic programmable thermostat",
+            installNote,
+            accessNote,
+          ],
+          estimatedPrice: goodPrice,
+          priceRangeLow: Math.round(goodPrice * 0.96),
+          priceRangeHigh: Math.round(goodPrice * 1.05),
+        },
+        {
+          level: "better",
+          systemName: "16 SEER2 Performance System",
+          description: "Balanced comfort and efficiency for the homeowner who wants solid long-term value.",
+          features: [
+            "Higher efficiency compressor and blower pairing",
+            draft.thermostatUpgrade ? "Smart thermostat setup and commissioning" : "System setup and commissioning",
+            "Improved airflow tuning for the existing home",
+            packageNote,
+            "Permit coordination and haul-away included",
+            conditionNote,
+            ...upsellFeatures.slice(0, 1),
+          ],
+          estimatedPrice: betterPrice,
+          priceRangeLow: Math.round(betterPrice * 0.95),
+          priceRangeHigh: Math.round(betterPrice * 1.06),
+        },
+        {
+          level: "best",
+          systemName: "20 SEER2 High Efficiency System",
+          description:
+            "Premium comfort package with quieter operation, stronger humidity control, and top-end efficiency.",
+          features: [
+            "Variable-speed indoor comfort performance",
+            "Enhanced humidity and airflow control",
+            draft.thermostatUpgrade
+              ? "Smart thermostat with homeowner orientation"
+              : "Premium control setup and homeowner orientation",
+            "Higher-efficiency filtration and startup testing",
+            comfortNote,
+            ...upsellFeatures.slice(0, 2),
+          ],
+          estimatedPrice: bestPrice,
+          priceRangeLow: Math.round(bestPrice * 0.95),
+          priceRangeHigh: Math.round(bestPrice * 1.08),
+        },
       ]),
     ),
   );

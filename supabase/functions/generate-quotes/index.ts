@@ -125,6 +125,35 @@ type VendorProductRow = {
   notes: string;
 };
 
+type VendorRow = {
+  id: string;
+  slug: string;
+  name: string;
+  integration_mode: "mock" | "catalog" | "manual-api";
+  active: boolean;
+  priority: number | null;
+  config: {
+    endpointUrl?: string;
+    branchCode?: string;
+    accountNumber?: string;
+    supportedSystemTypes?: string[];
+    notes?: string;
+  } | null;
+};
+
+type ManualApiVendorResponse = {
+  products?: Array<{
+    brand?: string;
+    modelFamily?: string;
+    quoteLevel?: QuoteLevel;
+    equipmentFactor?: number;
+    leadTimeDays?: number;
+    availability?: VendorAvailability;
+    rebateAmount?: number;
+    notes?: string;
+  }>;
+};
+
 const fallbackVendorProducts: VendorProductRow[] = [
   {
     vendor_id: "supply-pro",
@@ -235,6 +264,18 @@ const fallbackVendorProducts: VendorProductRow[] = [
     notes: "Premium brand path for homeowners prioritizing perceived value and quiet operation.",
   },
 ];
+
+function normalizeSupportedSystemTypes(input: unknown) {
+  if (!Array.isArray(input)) {
+    return [] as string[];
+  }
+
+  return input.filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -428,6 +469,131 @@ function calculateMonthlyPayment(principal: number, aprPercent: number, termMont
   }
 
   return (principal * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -termMonths));
+}
+
+function supportsSystemType(vendor: VendorRow, systemType: string) {
+  const supportedSystemTypes = normalizeSupportedSystemTypes(vendor.config?.supportedSystemTypes);
+  if (supportedSystemTypes.length === 0) {
+    return true;
+  }
+
+  return supportedSystemTypes.some((supported) => supported.toLowerCase() === systemType.toLowerCase());
+}
+
+function sortVendors(left: VendorRow, right: VendorRow) {
+  return (left.priority ?? 100) - (right.priority ?? 100);
+}
+
+async function fetchManualApiVendorProducts(
+  vendor: VendorRow,
+  draft: EstimateDraft,
+  pricingRules: PricingRules,
+) {
+  const endpointUrl = vendor.config?.endpointUrl?.trim();
+  if (!endpointUrl) {
+    return [] as VendorProductRow[];
+  }
+
+  const secretKeyName = `VENDOR_${vendor.slug.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+  const apiKey = Deno.env.get(secretKeyName);
+  if (!apiKey) {
+    return [] as VendorProductRow[];
+  }
+
+  const response = await fetch(endpointUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      vendor: {
+        slug: vendor.slug,
+        branchCode: vendor.config?.branchCode ?? "",
+        accountNumber: vendor.config?.accountNumber ?? "",
+      },
+      draft,
+      pricingRules,
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Vendor adapter request failed with ${response.status}`);
+  }
+
+  const payload = (await response.json()) as ManualApiVendorResponse;
+
+  return (payload.products ?? []).map((product) => ({
+    vendor_id: vendor.id,
+    vendor_name: vendor.name,
+    brand: product.brand ?? "Vendor equipment",
+    model_family: product.modelFamily ?? "Matched package",
+    quote_level: product.quoteLevel ?? "better",
+    equipment_factor: Number(product.equipmentFactor ?? 1),
+    lead_time_days: Number(product.leadTimeDays ?? 3),
+    availability: product.availability ?? "limited",
+    rebate_amount: Number(product.rebateAmount ?? 0),
+    notes: product.notes ?? vendor.config?.notes ?? "Live vendor adapter response",
+  }));
+}
+
+async function resolveVendorProducts(
+  vendors: VendorRow[],
+  vendorProductsData: Array<{
+    vendor_id: string;
+    brand: string;
+    model_family: string;
+    quote_level: string;
+    equipment_factor: number;
+    lead_time_days: number;
+    availability: string;
+    rebate_amount: number;
+    notes: string;
+  }>,
+  draft: EstimateDraft,
+  pricingRules: PricingRules,
+) {
+  const resolvedProducts: VendorProductRow[] = [];
+
+  for (const vendor of vendors.filter((item) => item.active).sort(sortVendors)) {
+    if (!supportsSystemType(vendor, draft.systemType)) {
+      continue;
+    }
+
+    const catalogProducts = vendorProductsData
+      .filter((product) => product.vendor_id === vendor.id)
+      .map((product) => ({
+        vendor_id: vendor.id,
+        vendor_name: vendor.name,
+        brand: product.brand,
+        model_family: product.model_family,
+        quote_level: product.quote_level as QuoteLevel,
+        equipment_factor: Number(product.equipment_factor ?? 1),
+        lead_time_days: Number(product.lead_time_days ?? 3),
+        availability: (product.availability as VendorAvailability) ?? "in-stock",
+        rebate_amount: Number(product.rebate_amount ?? 0),
+        notes: product.notes || vendor.config?.notes || "",
+      }));
+
+    if (vendor.integration_mode === "manual-api") {
+      try {
+        const liveProducts = await fetchManualApiVendorProducts(vendor, draft, pricingRules);
+        if (liveProducts.length > 0) {
+          resolvedProducts.push(...liveProducts);
+          continue;
+        }
+      } catch (error) {
+        console.warn(`Vendor adapter failed for ${vendor.slug}, using catalog fallback`, error);
+      }
+    }
+
+    if (catalogProducts.length > 0) {
+      resolvedProducts.push(...catalogProducts);
+    }
+  }
+
+  return resolvedProducts.length > 0 ? resolvedProducts : fallbackVendorProducts;
 }
 
 function calculateBaseHardCost(draft: EstimateDraft, pricingRules: PricingRules) {
@@ -826,28 +992,31 @@ Deno.serve(async (request) => {
     if (adminClient) {
       const { data: vendorRows } = await adminClient
         .from("vendors")
-        .select("id, name")
+        .select("id, slug, name, integration_mode, active, priority, config")
         .eq("active", true);
-      const vendorNameById = new Map((vendorRows ?? []).map((vendor) => [vendor.id as string, vendor.name as string]));
 
       const { data: vendorProductsData } = await adminClient
         .from("vendor_products")
         .select("vendor_id, brand, model_family, quote_level, equipment_factor, lead_time_days, availability, rebate_amount, notes")
         .eq("active", true);
 
-      if ((vendorProductsData ?? []).length > 0) {
-        vendorProducts = (vendorProductsData ?? []).map((vendorProduct) => ({
-          vendor_id: vendorProduct.vendor_id as string,
-          vendor_name: vendorNameById.get(vendorProduct.vendor_id as string) ?? "Vendor",
-          brand: vendorProduct.brand as string,
-          model_family: vendorProduct.model_family as string,
-          quote_level: vendorProduct.quote_level as QuoteLevel,
-          equipment_factor: Number(vendorProduct.equipment_factor ?? 1),
-          lead_time_days: Number(vendorProduct.lead_time_days ?? 3),
-          availability: (vendorProduct.availability as VendorAvailability) ?? "in-stock",
-          rebate_amount: Number(vendorProduct.rebate_amount ?? 0),
-          notes: (vendorProduct.notes as string) ?? "",
-        }));
+      if ((vendorRows ?? []).length > 0) {
+        vendorProducts = await resolveVendorProducts(
+          (vendorRows ?? []) as VendorRow[],
+          (vendorProductsData ?? []).map((vendorProduct) => ({
+            vendor_id: vendorProduct.vendor_id as string,
+            brand: vendorProduct.brand as string,
+            model_family: vendorProduct.model_family as string,
+            quote_level: vendorProduct.quote_level as string,
+            equipment_factor: Number(vendorProduct.equipment_factor ?? 1),
+            lead_time_days: Number(vendorProduct.lead_time_days ?? 3),
+            availability: vendorProduct.availability as string,
+            rebate_amount: Number(vendorProduct.rebate_amount ?? 0),
+            notes: (vendorProduct.notes as string) ?? "",
+          })),
+          draft,
+          pricingRules,
+        );
       }
     }
 
@@ -884,20 +1053,22 @@ Deno.serve(async (request) => {
 
       if (requestRow?.id) {
         const quoteItems = options.flatMap((option) =>
-          option.vendorComparisons.map((comparison) => ({
-            request_id: requestRow.id,
-            vendor_id: comparison.vendorId,
-            quote_level: option.level,
-            package_label: comparison.packageLabel,
-            brand: comparison.brand,
-            model_family: comparison.modelFamily,
-            estimated_equipment_cost: comparison.estimatedEquipmentCost,
-            estimated_installed_price: comparison.estimatedInstalledPrice,
-            lead_time_days: comparison.leadTimeDays,
-            availability: comparison.availability,
-            rebate_amount: comparison.rebateAmount,
-            notes: comparison.notes,
-          })),
+          option.vendorComparisons
+            .filter((comparison) => isUuid(comparison.vendorId))
+            .map((comparison) => ({
+              request_id: requestRow.id,
+              vendor_id: comparison.vendorId,
+              quote_level: option.level,
+              package_label: comparison.packageLabel,
+              brand: comparison.brand,
+              model_family: comparison.modelFamily,
+              estimated_equipment_cost: comparison.estimatedEquipmentCost,
+              estimated_installed_price: comparison.estimatedInstalledPrice,
+              lead_time_days: comparison.leadTimeDays,
+              availability: comparison.availability,
+              rebate_amount: comparison.rebateAmount,
+              notes: comparison.notes,
+            })),
         );
 
         if (quoteItems.length > 0) {

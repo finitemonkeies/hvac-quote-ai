@@ -69,6 +69,11 @@ create table if not exists public.vendors (
   slug text not null unique,
   name text not null,
   integration_mode text not null default 'mock',
+  priority integer not null default 100,
+  config jsonb not null default '{}'::jsonb,
+  connection_status text not null default 'needs-setup',
+  last_sync_at timestamptz,
+  last_error text,
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -171,6 +176,21 @@ alter table public.estimate_options
 
 alter table public.estimate_options
   add column if not exists vendor_snapshot jsonb not null default '[]'::jsonb;
+
+alter table public.vendors
+  add column if not exists priority integer not null default 100;
+
+alter table public.vendors
+  add column if not exists config jsonb not null default '{}'::jsonb;
+
+alter table public.vendors
+  add column if not exists connection_status text not null default 'needs-setup';
+
+alter table public.vendors
+  add column if not exists last_sync_at timestamptz;
+
+alter table public.vendors
+  add column if not exists last_error text;
 
 alter table public.users enable row level security;
 alter table public.organizations enable row level security;
@@ -417,6 +437,36 @@ set
   name = excluded.name,
   integration_mode = excluded.integration_mode,
   active = excluded.active;
+
+update public.vendors
+set
+  connection_status = case
+    when integration_mode = 'mock' then 'connected'
+    when coalesce(config->>'endpointUrl', '') <> '' then 'connected'
+    else 'needs-setup'
+  end,
+  priority = case
+    when slug = 'supply-pro' then 10
+    when slug = 'comfort-warehouse' then 20
+    when slug = 'premier-hvac' then 30
+    else priority
+  end,
+  config = case
+    when slug = 'supply-pro' then jsonb_build_object(
+      'supportedSystemTypes', jsonb_build_array('Split system', 'Heat pump'),
+      'notes', 'Mock regional distributor seed data'
+    )
+    when slug = 'comfort-warehouse' then jsonb_build_object(
+      'supportedSystemTypes', jsonb_build_array('Split system'),
+      'notes', 'Mock rebate-focused distributor seed data'
+    )
+    when slug = 'premier-hvac' then jsonb_build_object(
+      'supportedSystemTypes', jsonb_build_array('Split system', 'Dual fuel'),
+      'notes', 'Mock premium-brand distributor seed data'
+    )
+    else config
+  end
+where slug in ('supply-pro', 'comfort-warehouse', 'premier-hvac');
 
 insert into public.vendor_products (vendor_id, brand, model_family, quote_level, system_type, equipment_factor, lead_time_days, availability, rebate_amount, notes, active)
 select v.id, seed.brand, seed.model_family, seed.quote_level, seed.system_type, seed.equipment_factor, seed.lead_time_days, seed.availability, seed.rebate_amount, seed.notes, true
