@@ -221,6 +221,31 @@ export function Preview() {
           </div>
         ) : null}
 
+        {selected?.recommendedVendor ? (
+          <div className="border-b border-slate-200 py-5">
+            <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
+              <p className="text-sm font-semibold text-slate-950">Supplier comparison</p>
+              <p className="mt-1 text-sm text-slate-700">
+                {selected.recommendedVendor.vendorName} is currently the recommended supplier path for this option.
+              </p>
+              <div className="mt-3 grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Package</p>
+                  <p className="mt-1 font-medium text-slate-950">{selected.recommendedVendor.packageLabel}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Lead time</p>
+                  <p className="mt-1 font-medium text-slate-950">{selected.recommendedVendor.leadTimeDays} days</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Availability</p>
+                  <p className="mt-1 font-medium text-slate-950">{selected.recommendedVendor.availability}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="space-y-4 pt-5">
           {options.map((option) => (
             <button

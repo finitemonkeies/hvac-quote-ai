@@ -1,4 +1,5 @@
 export type QuoteLevel = "good" | "better" | "best";
+export type VendorAvailability = "in-stock" | "limited" | "special-order";
 
 export interface EstimateDraft {
   customerName: string;
@@ -52,6 +53,20 @@ export interface QuoteOptionInput {
   priceRangeHigh: number;
 }
 
+export interface VendorComparison {
+  vendorId: string;
+  vendorName: string;
+  packageLabel: string;
+  brand: string;
+  modelFamily: string;
+  estimatedInstalledPrice: number;
+  estimatedEquipmentCost: number;
+  leadTimeDays: number;
+  availability: VendorAvailability;
+  rebateAmount: number;
+  notes: string;
+}
+
 export type QuotePolicyStatus = "approved" | "needs-approval";
 export type EstimateApprovalStatus = "not-required" | "pending" | "approved";
 
@@ -65,6 +80,9 @@ export interface QuoteOption extends QuoteOptionInput {
   policyStatus: QuotePolicyStatus;
   policyReason: string | null;
   estimatedMonthlyPayment: number | null;
+  recommendedVendor: VendorComparison | null;
+  vendorComparisons: VendorComparison[];
+  vendorStrategy: string | null;
 }
 
 export interface ProposalCompany {

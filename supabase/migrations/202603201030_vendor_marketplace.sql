@@ -64,6 +64,29 @@ create table if not exists public.estimate_options (
   unique (estimate_id, level)
 );
 
+create table if not exists public.pricing_rules (
+  organization_id uuid primary key references public.organizations (id) on delete cascade,
+  labor_rate_per_hour numeric(10,2) not null default 125,
+  margin_floor_percent numeric(6,2) not null default 35,
+  max_discount_percent numeric(6,2) not null default 10,
+  default_financing_apr numeric(6,2) not null default 9.99,
+  thermostat_upgrade_price numeric(10,2) not null default 325,
+  iaq_bundle_price numeric(10,2) not null default 1350,
+  surge_protection_price numeric(10,2) not null default 425,
+  maintenance_plan_price numeric(10,2) not null default 290,
+  extended_labor_warranty_price numeric(10,2) not null default 1150,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.estimate_approvals (
+  estimate_id uuid primary key references public.estimates (id) on delete cascade,
+  user_id uuid not null references public.users (id) on delete cascade,
+  organization_id uuid not null references public.organizations (id) on delete cascade,
+  approval_status text not null default 'pending',
+  approval_note text,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.vendors (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
@@ -116,29 +139,6 @@ create table if not exists public.vendor_quote_items (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.pricing_rules (
-  organization_id uuid primary key references public.organizations (id) on delete cascade,
-  labor_rate_per_hour numeric(10,2) not null default 125,
-  margin_floor_percent numeric(6,2) not null default 35,
-  max_discount_percent numeric(6,2) not null default 10,
-  default_financing_apr numeric(6,2) not null default 9.99,
-  thermostat_upgrade_price numeric(10,2) not null default 325,
-  iaq_bundle_price numeric(10,2) not null default 1350,
-  surge_protection_price numeric(10,2) not null default 425,
-  maintenance_plan_price numeric(10,2) not null default 290,
-  extended_labor_warranty_price numeric(10,2) not null default 1150,
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists public.estimate_approvals (
-  estimate_id uuid primary key references public.estimates (id) on delete cascade,
-  user_id uuid not null references public.users (id) on delete cascade,
-  organization_id uuid not null references public.organizations (id) on delete cascade,
-  approval_status text not null default 'pending',
-  approval_note text,
-  updated_at timestamptz not null default now()
-);
-
 alter table public.estimates
   add column if not exists organization_id uuid references public.organizations (id) on delete cascade;
 
@@ -183,6 +183,7 @@ alter table public.vendor_products enable row level security;
 alter table public.vendor_quote_requests enable row level security;
 alter table public.vendor_quote_items enable row level security;
 
+drop policy if exists "Users can view own organization" on public.organizations;
 create policy "Users can view own organization"
 on public.organizations
 for select
@@ -195,6 +196,7 @@ using (
   )
 );
 
+drop policy if exists "Managers can manage own organization" on public.organizations;
 create policy "Managers can manage own organization"
 on public.organizations
 for all
@@ -218,12 +220,14 @@ with check (
   )
 );
 
+drop policy if exists "Users can manage own profile" on public.users;
 create policy "Users can manage own profile"
 on public.users
 for all
 using (auth.uid() = id)
 with check (auth.uid() = id);
 
+drop policy if exists "Users can manage organization estimates" on public.estimates;
 create policy "Users can manage organization estimates"
 on public.estimates
 for all
@@ -244,6 +248,7 @@ with check (
   )
 );
 
+drop policy if exists "Users can manage estimate options for their estimates" on public.estimate_options;
 create policy "Users can manage estimate options for their estimates"
 on public.estimate_options
 for all
@@ -266,6 +271,7 @@ with check (
   )
 );
 
+drop policy if exists "Organization members can view pricing rules" on public.pricing_rules;
 create policy "Organization members can view pricing rules"
 on public.pricing_rules
 for select
@@ -278,6 +284,7 @@ using (
   )
 );
 
+drop policy if exists "Managers can manage organization pricing rules" on public.pricing_rules;
 create policy "Managers can manage organization pricing rules"
 on public.pricing_rules
 for all
@@ -300,6 +307,7 @@ with check (
   )
 );
 
+drop policy if exists "Organization members can manage estimate approvals" on public.estimate_approvals;
 create policy "Organization members can manage estimate approvals"
 on public.estimate_approvals
 for all
@@ -320,16 +328,19 @@ with check (
   )
 );
 
+drop policy if exists "Authenticated users can view vendors" on public.vendors;
 create policy "Authenticated users can view vendors"
 on public.vendors
 for select
 using (auth.uid() is not null);
 
+drop policy if exists "Authenticated users can view vendor products" on public.vendor_products;
 create policy "Authenticated users can view vendor products"
 on public.vendor_products
 for select
 using (auth.uid() is not null);
 
+drop policy if exists "Managers can manage vendor catalog" on public.vendors;
 create policy "Managers can manage vendor catalog"
 on public.vendors
 for all
@@ -350,6 +361,7 @@ with check (
   )
 );
 
+drop policy if exists "Managers can manage vendor products" on public.vendor_products;
 create policy "Managers can manage vendor products"
 on public.vendor_products
 for all
@@ -370,6 +382,7 @@ with check (
   )
 );
 
+drop policy if exists "Organization members can view vendor quote requests" on public.vendor_quote_requests;
 create policy "Organization members can view vendor quote requests"
 on public.vendor_quote_requests
 for select
@@ -382,6 +395,7 @@ using (
   )
 );
 
+drop policy if exists "Organization members can create vendor quote requests" on public.vendor_quote_requests;
 create policy "Organization members can create vendor quote requests"
 on public.vendor_quote_requests
 for insert
@@ -394,6 +408,7 @@ with check (
   )
 );
 
+drop policy if exists "Organization members can view vendor quote items" on public.vendor_quote_items;
 create policy "Organization members can view vendor quote items"
 on public.vendor_quote_items
 for select

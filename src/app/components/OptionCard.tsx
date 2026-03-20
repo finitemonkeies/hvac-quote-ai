@@ -49,6 +49,33 @@ export function OptionCard({ option, isSelected, onSelect, onRefine }: OptionCar
         <p className="mt-1 text-xs font-medium text-slate-500">{option.systemName}</p>
       </div>
 
+      {option.recommendedVendor ? (
+        <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/70 px-3 py-3 text-xs text-slate-700">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold text-slate-950">Best supplier path</span>
+            <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-700">
+              {option.recommendedVendor.availability}
+            </span>
+          </div>
+          <p className="mt-2 font-medium text-slate-950">{option.recommendedVendor.vendorName}</p>
+          <p className="mt-1">{option.recommendedVendor.notes}</p>
+          <div className="mt-2 flex justify-between gap-3">
+            <span>Lead time</span>
+            <span className="font-medium text-slate-950">{option.recommendedVendor.leadTimeDays} days</span>
+          </div>
+          <div className="mt-1 flex justify-between gap-3">
+            <span>Vendor est.</span>
+            <span className="font-medium text-slate-950">{formatCurrency(option.recommendedVendor.estimatedInstalledPrice)}</span>
+          </div>
+          {option.vendorComparisons.length > 1 ? (
+            <p className="mt-2 text-slate-600">
+              {option.vendorComparisons.length - 1} alternative supplier
+              {option.vendorComparisons.length - 1 === 1 ? "" : "s"} priced for comparison.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="mt-4 rounded-2xl bg-slate-50 px-3 py-3 text-xs text-slate-600">
         <div className="flex justify-between gap-3">
           <span>Hard cost</span>

@@ -1,5 +1,7 @@
 import type { EstimateDraft, PricingRules, QuoteOption, QuoteOptionInput } from "../types/estimate";
 import { calculateMonthlyPayment } from "../lib/format";
+import { generateQuoteOptionsViaSupabase, supabase } from "./supabase";
+import { enrichOptionsWithVendorComparisons } from "./vendor-marketplace";
 
 const model = import.meta.env.VITE_OPENAI_MODEL ?? "gpt-5-mini";
 const openAiApiKey = import.meta.env.VITE_OPENAI_API_KEY;
@@ -104,6 +106,9 @@ function sanitizeOptions(input: OpenAiQuoteResponse["options"]): QuoteOption[] {
       policyStatus: "approved",
       policyReason: null,
       estimatedMonthlyPayment: null,
+      recommendedVendor: null,
+      vendorComparisons: [],
+      vendorStrategy: null,
     };
   });
 }
@@ -284,7 +289,11 @@ async function generateWithOpenAi(draft: EstimateDraft, pricingRules: PricingRul
   const payload = await response.json();
   const content = payload.choices?.[0]?.message?.content;
   const parsed = JSON.parse(content ?? "{}") as OpenAiQuoteResponse;
-  return sanitizeOptions(parsed.options ?? []);
+  return enrichOptionsWithVendorComparisons(
+    draft,
+    pricingRules,
+    applyQuotePolicy(draft, pricingRules, sanitizeOptions(parsed.options ?? [])),
+  );
 }
 
 function generateFallbackOptions(draft: EstimateDraft, pricingRules: PricingRules): QuoteOption[] {
@@ -321,10 +330,13 @@ function generateFallbackOptions(draft: EstimateDraft, pricingRules: PricingRule
     draft.extendedLaborWarranty ? "Extended labor warranty coverage included" : null,
   ].filter(Boolean) as string[];
 
-  return applyQuotePolicy(
+  return enrichOptionsWithVendorComparisons(
     draft,
     pricingRules,
-    sanitizeOptions([
+    applyQuotePolicy(
+      draft,
+      pricingRules,
+      sanitizeOptions([
     {
       level: "good",
       systemName: "14 SEER2 Comfort System",
@@ -373,11 +385,20 @@ function generateFallbackOptions(draft: EstimateDraft, pricingRules: PricingRule
       priceRangeLow: Math.round(bestPrice * 0.95),
       priceRangeHigh: Math.round(bestPrice * 1.08),
     },
-    ]),
+      ]),
+    ),
   );
 }
 
 export async function generateQuoteOptions(draft: EstimateDraft, pricingRules: PricingRules) {
+  if (supabase) {
+    try {
+      return await generateQuoteOptionsViaSupabase({ draft, pricingRules });
+    } catch (error) {
+      console.warn("Falling back from Supabase quote generation", error);
+    }
+  }
+
   if (!openAiApiKey) {
     return generateFallbackOptions(draft, pricingRules);
   }

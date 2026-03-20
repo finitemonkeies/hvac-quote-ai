@@ -5,6 +5,7 @@ import type {
   PricingRules,
   ProposalCompany,
   QuoteOption,
+  VendorComparison,
 } from "../types/estimate";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -53,6 +54,8 @@ type EstimateOptionRow = {
   policy_status: QuoteOption["policyStatus"] | null;
   policy_reason: string | null;
   estimated_monthly_payment: number | null;
+  vendor_strategy: string | null;
+  vendor_snapshot: VendorComparison[] | null;
 };
 
 type EstimateRow = {
@@ -150,6 +153,9 @@ function mapOptions(rows: EstimateOptionRow[] | null): QuoteOption[] {
       policyStatus: row.policy_status ?? "approved",
       policyReason: row.policy_reason,
       estimatedMonthlyPayment: row.estimated_monthly_payment ? Math.round(row.estimated_monthly_payment) : null,
+      recommendedVendor: (row.vendor_snapshot ?? [])[0] ?? null,
+      vendorComparisons: row.vendor_snapshot ?? [],
+      vendorStrategy: row.vendor_strategy,
     }));
 }
 
@@ -557,6 +563,8 @@ export async function saveEstimateToSupabase(record: EstimateRecord) {
     policy_status: option.policyStatus,
     policy_reason: option.policyReason,
     estimated_monthly_payment: option.estimatedMonthlyPayment,
+    vendor_strategy: option.vendorStrategy,
+    vendor_snapshot: option.vendorComparisons,
   }));
 
   const { error: optionsError } = await supabase
@@ -597,7 +605,7 @@ export async function fetchRecentEstimatesFromSupabase(limit = 8) {
   const { data, error } = await supabase
     .from("estimates")
     .select(
-      "id, created_at, customer_name, property_address, job_type, system_type, project_scope, notes, selected_option_id, approval_status, approval_note, delivery_method, proposal_company_name, proposal_company_email, proposal_company_phone, estimate_options(level, title, system_name, description, features, estimated_price, price_range_low, price_range_high, is_recommended, hard_cost, gross_margin_percent, policy_status, policy_reason, estimated_monthly_payment)",
+      "id, created_at, customer_name, property_address, job_type, system_type, project_scope, notes, selected_option_id, approval_status, approval_note, delivery_method, proposal_company_name, proposal_company_email, proposal_company_phone, estimate_options(level, title, system_name, description, features, estimated_price, price_range_low, price_range_high, is_recommended, hard_cost, gross_margin_percent, policy_status, policy_reason, estimated_monthly_payment, vendor_strategy, vendor_snapshot)",
     )
     .eq("organization_id", profile.organizationId)
     .order("created_at", { ascending: false })
@@ -717,4 +725,28 @@ export async function sendProposalEmailViaSupabase(input: {
   }
 
   return data;
+}
+
+export async function generateQuoteOptionsViaSupabase(input: {
+  draft: EstimateDraft;
+  pricingRules: PricingRules;
+}) {
+  if (!supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const { data, error } = await supabase.functions.invoke("generate-quotes", {
+    body: input,
+  });
+
+  if (error) {
+    throw new Error(error.message || "Failed to generate quote options.");
+  }
+
+  const options = (data as { options?: QuoteOption[] } | null)?.options;
+  if (!options || !Array.isArray(options)) {
+    throw new Error("Quote generation returned an invalid payload.");
+  }
+
+  return options;
 }

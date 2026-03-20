@@ -12,6 +12,7 @@ export function Options() {
   const navigate = useNavigate();
   const { draft, options, pricingRules, selectedOptionId, selectOption } = useEstimate();
   const better = options.find((option) => option.level === "better");
+  const selected = options.find((option) => option.id === selectedOptionId) ?? better ?? options[0];
   const flaggedOptions = options.filter((option) => option.policyStatus === "needs-approval");
   const laborCost = draft.laborHours * pricingRules.laborRatePerHour;
   const baseTotal = draft.equipmentCost + laborCost + draft.materials;
@@ -53,6 +54,18 @@ export function Options() {
             <p className="text-sm font-semibold text-amber-950">Approval required on {flaggedOptions.length} option(s)</p>
             <p className="mt-1 text-sm text-amber-800">
               Quotes below the {pricingRules.marginFloorPercent}% margin floor or above the {pricingRules.maxDiscountPercent}% discount limit are flagged for approval.
+            </p>
+          </Card>
+        ) : null}
+
+        {selected?.recommendedVendor ? (
+          <Card className="mt-4 rounded-[18px] border-sky-200 bg-sky-50/70 p-4 shadow-none">
+            <p className="text-sm font-semibold text-slate-950">Supplier comparison is active</p>
+            <p className="mt-1 text-sm text-slate-700">
+              {selected.vendorStrategy}
+            </p>
+            <p className="mt-2 text-sm text-slate-600">
+              Current best fit: {selected.recommendedVendor.vendorName} • {selected.recommendedVendor.leadTimeDays} day lead time • {formatCurrency(selected.recommendedVendor.estimatedInstalledPrice)} installed estimate
             </p>
           </Card>
         ) : null}
