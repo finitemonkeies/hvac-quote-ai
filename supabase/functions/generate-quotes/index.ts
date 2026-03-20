@@ -168,6 +168,14 @@ type VendorHealthCheckResult = {
   productCount: number;
 };
 
+type QuoteResponseMetadata = {
+  aiUsed: boolean;
+  fallbackUsed: boolean;
+  fallbackReason: string | null;
+  vendorModesUsed: string[];
+  recommendedVendors: string[];
+};
+
 const fallbackVendorProducts: VendorProductRow[] = [
   {
     vendor_id: "supply-pro",
@@ -1247,12 +1255,19 @@ Deno.serve(async (request) => {
     }
 
     let baseOptions: QuoteOption[];
+    let aiUsed = false;
+    let fallbackReason: string | null = null;
 
     try {
       const aiOptions = await generateWithOpenAi(draft, pricingRules);
+      aiUsed = Boolean(aiOptions);
+      if (!aiOptions) {
+        fallbackReason = "OpenAI is not configured; using local option generator.";
+      }
       baseOptions = aiOptions ?? applyQuotePolicy(draft, pricingRules, buildBaseOptions(draft, pricingRules));
     } catch (error) {
       console.warn("OpenAI quote generation failed, using fallback", error);
+      fallbackReason = error instanceof Error ? error.message : "OpenAI quote generation failed.";
       baseOptions = applyQuotePolicy(draft, pricingRules, buildBaseOptions(draft, pricingRules));
     }
 
@@ -1263,6 +1278,19 @@ Deno.serve(async (request) => {
       vendorProducts,
     );
 
+    const responseMetadata: QuoteResponseMetadata = {
+      aiUsed,
+      fallbackUsed: !aiUsed,
+      fallbackReason,
+      vendorModesUsed: [...new Set(
+        ((adminClient ? (await adminClient
+          .from("vendors")
+          .select("integration_mode")
+          .eq("active", true)).data : []) ?? []).map((vendor) => String(vendor.integration_mode ?? "mock")),
+      )],
+      recommendedVendors: [...new Set(options.map((option) => option.recommendedVendor?.vendorName).filter(Boolean) as string[])],
+    };
+
     if (adminClient && organizationId) {
       const { data: requestRow } = await adminClient
         .from("vendor_quote_requests")
@@ -1272,7 +1300,7 @@ Deno.serve(async (request) => {
           customer_name: draft.customerName || null,
           system_type: draft.systemType,
           job_type: draft.jobType,
-          request_payload: { draft, pricingRules },
+          request_payload: { draft, pricingRules, responseMetadata },
         })
         .select("id")
         .single();

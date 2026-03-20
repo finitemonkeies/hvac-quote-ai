@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Building2, Copy, PlugZap, Users } from "lucide-react";
+import { Activity, Building2, Copy, PlugZap, Users } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "../components/AppShell";
 import { StepHeader } from "../components/StepHeader";
@@ -17,11 +17,13 @@ import {
 import { useAuth } from "../lib/auth";
 import { useEstimate } from "../lib/estimate-store";
 import {
+  fetchQuoteObservabilitySummary,
   fetchVendorIntegrationsFromSupabase,
   fetchLatestVendorQuoteRequestSummary,
   generateQuoteOptionsViaSupabase,
   saveVendorIntegrationToSupabase,
   testVendorIntegrationViaSupabase,
+  type QuoteObservabilitySummary,
 } from "../services/supabase";
 import type { VendorIntegration, VendorIntegrationTestResult } from "../types/estimate";
 
@@ -50,6 +52,8 @@ export function Settings() {
   const [savingVendorId, setSavingVendorId] = useState<string | null>(null);
   const [testingVendorId, setTestingVendorId] = useState<string | null>(null);
   const [vendorTestResults, setVendorTestResults] = useState<Record<string, VendorIntegrationTestResult>>({});
+  const [observabilitySummary, setObservabilitySummary] = useState<QuoteObservabilitySummary | null>(null);
+  const [isLoadingObservability, setIsLoadingObservability] = useState(false);
 
   useEffect(() => {
     setWorkspaceName(profile?.organizationName ?? "");
@@ -83,6 +87,35 @@ export function Settings() {
       active = false;
     };
   }, [profile?.role]);
+
+  useEffect(() => {
+    if (profile?.role !== "manager") {
+      setObservabilitySummary(null);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingObservability(true);
+
+    fetchQuoteObservabilitySummary()
+      .then((summary) => {
+        if (active) {
+          setObservabilitySummary(summary);
+        }
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "Could not load quote observability."));
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoadingObservability(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.organizationId, profile?.role]);
 
   const getErrorMessage = (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback;
@@ -166,6 +199,8 @@ export function Settings() {
         latestRequestCustomer: latestRequest.customerName || "No customer name",
         latestRequestItemCount: latestRequest.itemCount,
       });
+      const summary = await fetchQuoteObservabilitySummary();
+      setObservabilitySummary(summary);
       toast.success("Quote backend smoke test and logging check passed.");
     } catch (error) {
       setSmokeTestResult(null);
@@ -217,6 +252,8 @@ export function Settings() {
       setVendorTestResults((current) => ({ ...current, [vendor.id]: result }));
       const refreshed = await fetchVendorIntegrationsFromSupabase();
       setVendors(refreshed);
+      const summary = await fetchQuoteObservabilitySummary();
+      setObservabilitySummary(summary);
       toast.success(`${vendor.name} test completed.`);
     } catch (error) {
       toast.error(getErrorMessage(error, "Could not test vendor integration."));
@@ -569,6 +606,74 @@ export function Settings() {
             </div>
           </div>
         </Card>
+
+        {profile?.role === "manager" ? (
+          <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
+                <Activity className="size-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">Quote Health</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Monitor vendor readiness and whether the quote engine is leaning on fallbacks.
+                </p>
+              </div>
+            </div>
+
+            {isLoadingObservability ? (
+              <p className="text-sm text-slate-500">Loading quote health...</p>
+            ) : observabilitySummary ? (
+              <div className="space-y-4 text-sm text-slate-700">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-slate-500">Recent quote requests</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.totalRequests}</p>
+                    <p className="mt-1 text-slate-600">
+                      Last request: {observabilitySummary.latestRequestAt ? new Date(observabilitySummary.latestRequestAt).toLocaleString() : "No requests yet"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-slate-500">Fallback activity</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.fallbackUsedCount}</p>
+                    <p className="mt-1 text-slate-600">
+                      AI used on {observabilitySummary.aiUsedCount} recent requests
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <p className="text-emerald-700">Connected vendors</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.connectedVendorCount}</p>
+                  </div>
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-amber-700">Need setup</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.vendorNeedsSetupCount}</p>
+                  </div>
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+                    <p className="text-rose-700">Vendor errors</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{observabilitySummary.vendorErrorCount}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="font-medium text-slate-950">Top recommended vendors</p>
+                  <p className="mt-1 text-slate-600">
+                    {observabilitySummary.topRecommendedVendors.length > 0
+                      ? observabilitySummary.topRecommendedVendors.map((vendor) => `${vendor.name} (${vendor.count})`).join(", ")
+                      : "No recommendation data yet."}
+                  </p>
+                  <p className="mt-2 text-slate-600">
+                    Latest fallback reason: {observabilitySummary.latestFallbackReason || "No fallback reason recorded recently."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">No quote health data yet.</p>
+            )}
+          </Card>
+        ) : null}
 
         {profile?.role === "manager" ? (
           <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">

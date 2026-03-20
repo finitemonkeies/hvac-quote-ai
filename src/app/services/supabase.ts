@@ -45,6 +45,18 @@ export type VendorQuoteRequestSummary = {
   itemCount: number;
 };
 
+export type QuoteObservabilitySummary = {
+  totalRequests: number;
+  aiUsedCount: number;
+  fallbackUsedCount: number;
+  connectedVendorCount: number;
+  vendorNeedsSetupCount: number;
+  vendorErrorCount: number;
+  latestRequestAt: string | null;
+  latestFallbackReason: string | null;
+  topRecommendedVendors: Array<{ name: string; count: number }>;
+};
+
 type EstimateSnapshot = {
   version: 3;
   draft: EstimateDraft;
@@ -134,6 +146,19 @@ type VendorRow = {
   connection_status: VendorIntegration["connectionStatus"] | null;
   last_sync_at: string | null;
   last_error: string | null;
+};
+
+type VendorQuoteRequestRow = {
+  id: string;
+  created_at: string;
+  request_payload: {
+    responseMetadata?: {
+      aiUsed?: boolean;
+      fallbackUsed?: boolean;
+      fallbackReason?: string | null;
+      recommendedVendors?: string[];
+    };
+  } | null;
 };
 
 function buildSnapshot(record: EstimateRecord) {
@@ -946,5 +971,77 @@ export async function fetchLatestVendorQuoteRequestSummary() {
     systemType: requestRow.system_type as string,
     jobType: requestRow.job_type as string,
     itemCount: count ?? 0,
+  };
+}
+
+export async function fetchQuoteObservabilitySummary() {
+  if (!supabase) {
+    return null as QuoteObservabilitySummary | null;
+  }
+
+  const profile = await fetchCurrentUserProfile();
+  if (!profile?.organizationId) {
+    return null as QuoteObservabilitySummary | null;
+  }
+
+  const [{ data: vendorRows, error: vendorError }, { data: requestRows, error: requestError }] = await Promise.all([
+    supabase
+      .from("vendors")
+      .select("id, connection_status")
+      .order("name", { ascending: true }),
+    supabase
+      .from("vendor_quote_requests")
+      .select("id, created_at, request_payload")
+      .eq("organization_id", profile.organizationId)
+      .order("created_at", { ascending: false })
+      .limit(25),
+  ]);
+
+  if (vendorError) {
+    throw new Error(vendorError.message || "Failed to fetch vendor health.");
+  }
+
+  if (requestError) {
+    throw new Error(requestError.message || "Failed to fetch quote observability.");
+  }
+
+  const requests = (requestRows ?? []) as VendorQuoteRequestRow[];
+  const vendorStatusRows = (vendorRows ?? []) as Array<{ connection_status: VendorIntegration["connectionStatus"] | null }>;
+  const vendorWinCounts = new Map<string, number>();
+
+  let aiUsedCount = 0;
+  let fallbackUsedCount = 0;
+  let latestFallbackReason: string | null = null;
+
+  for (const request of requests) {
+    const responseMetadata = request.request_payload?.responseMetadata;
+    if (responseMetadata?.aiUsed) {
+      aiUsedCount += 1;
+    }
+    if (responseMetadata?.fallbackUsed) {
+      fallbackUsedCount += 1;
+      if (!latestFallbackReason && responseMetadata.fallbackReason) {
+        latestFallbackReason = responseMetadata.fallbackReason;
+      }
+    }
+
+    for (const vendorName of responseMetadata?.recommendedVendors ?? []) {
+      vendorWinCounts.set(vendorName, (vendorWinCounts.get(vendorName) ?? 0) + 1);
+    }
+  }
+
+  return {
+    totalRequests: requests.length,
+    aiUsedCount,
+    fallbackUsedCount,
+    connectedVendorCount: vendorStatusRows.filter((vendor) => vendor.connection_status === "connected").length,
+    vendorNeedsSetupCount: vendorStatusRows.filter((vendor) => vendor.connection_status === "needs-setup").length,
+    vendorErrorCount: vendorStatusRows.filter((vendor) => vendor.connection_status === "error").length,
+    latestRequestAt: requests[0]?.created_at ?? null,
+    latestFallbackReason,
+    topRecommendedVendors: [...vendorWinCounts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 3)
+      .map(([name, count]) => ({ name, count })),
   };
 }
