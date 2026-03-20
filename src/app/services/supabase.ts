@@ -354,12 +354,23 @@ export async function upsertUserProfile(user: User) {
     return { persisted: false };
   }
 
+  const { data: existingProfile } = await supabase
+    .from("users")
+    .select("id, role, organization_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
   const payload = {
     id: user.id,
     full_name: user.user_metadata?.full_name ?? null,
     company_name: user.user_metadata?.company_name ?? null,
     phone: user.phone ?? null,
-    role: user.user_metadata?.role === "rep" ? "rep" : "manager",
+    role:
+      existingProfile?.role === "rep" || existingProfile?.role === "manager"
+        ? existingProfile.role
+        : user.user_metadata?.role === "rep"
+          ? "rep"
+          : "manager",
   };
 
   const { error } = await supabase.from("users").upsert(payload);
@@ -369,13 +380,7 @@ export async function upsertUserProfile(user: User) {
     return { persisted: false, error };
   }
 
-  const { data: profile } = await supabase
-    .from("users")
-    .select("id, full_name, company_name, phone, role, organization_id")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  await ensureCurrentUserWorkspace(user, (profile as UserRow | null) ?? null);
+  await ensureCurrentUserWorkspace(user, (existingProfile as UserRow | null) ?? null);
 
   return { persisted: true };
 }
@@ -490,7 +495,10 @@ export async function updateWorkspaceMemberRole(memberId: string, role: Workspac
     return { persisted: false };
   }
 
-  const { error } = await supabase.from("users").update({ role }).eq("id", memberId);
+  const { error } = await supabase.rpc("set_workspace_member_role", {
+    target_member_id: memberId,
+    next_role: role,
+  });
 
   if (error) {
     console.warn("Workspace member role update failed", error);

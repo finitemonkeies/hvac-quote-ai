@@ -35,6 +35,7 @@ interface AuthContextValue {
   joinWorkspace: (joinCode: string) => Promise<void>;
   updateMemberRole: (memberId: string, role: WorkspaceMember["role"]) => Promise<void>;
   refreshMembers: () => Promise<void>;
+  refreshWorkspaceContext: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -45,6 +46,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const refreshWorkspaceContext = async () => {
+    const nextProfile = await fetchCurrentUserProfile();
+    const nextMembers = await fetchWorkspaceMembers();
+    setProfile(nextProfile);
+    setMembers(nextMembers);
+    return nextProfile;
+  };
 
   useEffect(() => {
     if (!supabase) {
@@ -68,11 +77,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       if (data.session?.user) {
         await upsertUserProfile(data.session.user);
-        const nextProfile = await fetchCurrentUserProfile();
-        const nextMembers = await fetchWorkspaceMembers();
         if (active) {
-          setProfile(nextProfile);
-          setMembers(nextMembers);
+          await refreshWorkspaceContext();
         }
       } else {
         setProfile(null);
@@ -90,13 +96,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setLoading(false);
 
       if (nextSession?.user) {
-        void upsertUserProfile(nextSession.user);
-        void fetchCurrentUserProfile().then((nextProfile) => {
-          setProfile(nextProfile);
-        });
-        void fetchWorkspaceMembers().then((nextMembers) => {
-          setMembers(nextMembers);
-        });
+        void (async () => {
+          await upsertUserProfile(nextSession.user);
+          await refreshWorkspaceContext();
+        })();
       } else {
         setProfile(null);
         setMembers([]);
@@ -174,6 +177,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const nextMembers = await fetchWorkspaceMembers();
         setMembers(nextMembers);
       },
+      refreshWorkspaceContext,
     }),
     [loading, members, profile, session, user],
   );

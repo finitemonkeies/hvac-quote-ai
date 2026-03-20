@@ -160,7 +160,7 @@ function writeStorage<T>(key: string, value: T) {
 }
 
 export function EstimateProvider({ children }: PropsWithChildren) {
-  const { user } = useAuth();
+  const { profile, user } = useAuth();
   const [draft, setDraft] = useState<EstimateDraft>(() =>
     readStorage(CURRENT_ESTIMATE_KEY, defaultDraft),
   );
@@ -278,7 +278,7 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   }, [options, selectedOptionId]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !profile?.organizationId) {
       setRecentEstimates([]);
       return;
     }
@@ -307,10 +307,10 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [profile?.organizationId, user]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !profile?.organizationId) {
       return;
     }
 
@@ -331,7 +331,7 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [profile?.organizationId, user]);
 
   const startNewEstimate = () => {
     setDraft(defaultDraft);
