@@ -101,6 +101,10 @@ export function Home() {
                   record.options.find((option) => option.id === record.selectedOptionId) ??
                   record.options[1] ??
                   record.options[0];
+                const latestDelivery = record.deliveryHistory[0];
+                const deliverySummary = latestDelivery
+                  ? `Last ${latestDelivery.method} to ${latestDelivery.destination || "customer"}`
+                  : "Draft saved";
 
                 return (
                   <button
@@ -126,6 +130,7 @@ export function Home() {
                           <p className="mt-1 text-[0.98rem] text-slate-600">
                             {record.draft.homeSize.toLocaleString()} sq ft &bull; {record.draft.systemType}
                           </p>
+                          <p className="mt-1 text-sm text-slate-500">{deliverySummary}</p>
                         </div>
                         <div className="flex items-center gap-3">
                           <p className="text-[1.05rem] font-semibold text-slate-950">

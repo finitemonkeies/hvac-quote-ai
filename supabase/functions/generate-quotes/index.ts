@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.56.0";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 type QuoteLevel = "good" | "better" | "best";
@@ -97,6 +98,18 @@ type QuoteOption = {
   recommendedVendor: VendorComparison | null;
   vendorComparisons: VendorComparison[];
   vendorStrategy: string | null;
+};
+
+type OpenAiQuoteResponse = {
+  options: Array<{
+    level: QuoteLevel;
+    systemName: string;
+    description: string;
+    features: string[];
+    estimatedPrice: number;
+    priceRangeLow: number;
+    priceRangeHigh: number;
+  }>;
 };
 
 type VendorProductRow = {
@@ -231,6 +244,177 @@ function jsonResponse(body: unknown, status = 200) {
       "Content-Type": "application/json",
     },
   });
+}
+
+const responseSchema = {
+  name: "hvac_quote_options",
+  strict: true,
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["options"],
+    properties: {
+      options: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "level",
+            "systemName",
+            "description",
+            "features",
+            "estimatedPrice",
+            "priceRangeLow",
+            "priceRangeHigh",
+          ],
+          properties: {
+            level: {
+              type: "string",
+              enum: ["good", "better", "best"],
+            },
+            systemName: { type: "string" },
+            description: { type: "string" },
+            features: {
+              type: "array",
+              minItems: 3,
+              maxItems: 6,
+              items: { type: "string" },
+            },
+            estimatedPrice: { type: "number" },
+            priceRangeLow: { type: "number" },
+            priceRangeHigh: { type: "number" },
+          },
+        },
+      },
+    },
+  },
+};
+
+async function requireAuthenticatedUser(request: Request) {
+  const authorization = request.headers.get("Authorization") ?? request.headers.get("authorization");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+
+  if (!authorization?.startsWith("Bearer ")) {
+    throw jsonResponse({ error: "Missing authorization token." }, 401);
+  }
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw jsonResponse({ error: "Missing Supabase auth configuration." }, 500);
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    method: "GET",
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: authorization,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw jsonResponse({ error: message || "Invalid auth token." }, 401);
+  }
+}
+
+function sanitizeOptions(input: OpenAiQuoteResponse["options"]): QuoteOption[] {
+  const order: QuoteLevel[] = ["good", "better", "best"];
+
+  return order.map((level, index) => {
+    const option = input.find((item) => item.level === level) ?? input[index];
+    const safePrice = Math.max(0, Math.round(option?.estimatedPrice ?? 0));
+
+    return {
+      id: level,
+      level,
+      title: level === "good" ? "Good" : level === "better" ? "Better" : "Best",
+      systemName:
+        option?.systemName ??
+        (level === "good"
+          ? "14 SEER2 Comfort System"
+          : level === "better"
+            ? "16 SEER2 Performance System"
+            : "20 SEER2 High Efficiency System"),
+      description: option?.description ?? "",
+      features: (option?.features ?? []).slice(0, 6),
+      estimatedPrice: safePrice,
+      priceRangeLow: Math.max(0, Math.round(option?.priceRangeLow ?? safePrice * 0.95)),
+      priceRangeHigh: Math.max(0, Math.round(option?.priceRangeHigh ?? safePrice * 1.06)),
+      isRecommended: level === "best",
+      hardCost: 0,
+      grossMarginPercent: 0,
+      policyStatus: "approved",
+      policyReason: null,
+      estimatedMonthlyPayment: null,
+      recommendedVendor: null,
+      vendorComparisons: [],
+      vendorStrategy: null,
+    };
+  });
+}
+
+function buildPrompt(draft: EstimateDraft, pricingRules: PricingRules) {
+  return [
+    "You generate HVAC install estimate options for field technicians.",
+    "Return Good, Better, Best options only.",
+    "Use generic system names and do not mention manufacturers, SKUs, or inventory.",
+    "Good system name: 14 SEER2 Comfort System.",
+    "Better system name: 16 SEER2 Performance System.",
+    "Best system name: 20 SEER2 High Efficiency System.",
+    "Each option needs a concise description, 3-6 features, estimated price, and low/high range.",
+    "Make the Better option the baseline and Best the recommended option.",
+    "Pricing assumptions:",
+    JSON.stringify(pricingRules),
+    "Estimate context:",
+    JSON.stringify(draft),
+  ].join("\n");
+}
+
+async function generateWithOpenAi(draft: EstimateDraft, pricingRules: PricingRules) {
+  const openAiApiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!openAiApiKey) {
+    return null as QuoteOption[] | null;
+  }
+
+  const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-5-mini";
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiApiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.4,
+      messages: [
+        {
+          role: "system",
+          content: "You create structured HVAC quote options for technicians.",
+        },
+        {
+          role: "user",
+          content: buildPrompt(draft, pricingRules),
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: responseSchema,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `OpenAI request failed with ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const content = payload.choices?.[0]?.message?.content;
+  const parsed = JSON.parse(content ?? "{}") as OpenAiQuoteResponse;
+  return applyQuotePolicy(draft, pricingRules, sanitizeOptions(parsed.options ?? []));
 }
 
 function calculateMonthlyPayment(principal: number, aprPercent: number, termMonths: number) {
@@ -602,6 +786,8 @@ Deno.serve(async (request) => {
   }
 
   try {
+    await requireAuthenticatedUser(request);
+
     const { draft, pricingRules } = await request.json() as {
       draft: EstimateDraft;
       pricingRules: PricingRules;
@@ -665,7 +851,16 @@ Deno.serve(async (request) => {
       }
     }
 
-    const baseOptions = applyQuotePolicy(draft, pricingRules, buildBaseOptions(draft, pricingRules));
+    let baseOptions: QuoteOption[];
+
+    try {
+      const aiOptions = await generateWithOpenAi(draft, pricingRules);
+      baseOptions = aiOptions ?? applyQuotePolicy(draft, pricingRules, buildBaseOptions(draft, pricingRules));
+    } catch (error) {
+      console.warn("OpenAI quote generation failed, using fallback", error);
+      baseOptions = applyQuotePolicy(draft, pricingRules, buildBaseOptions(draft, pricingRules));
+    }
+
     const options = enrichOptionsWithVendors(
       draft,
       pricingRules,
@@ -713,6 +908,10 @@ Deno.serve(async (request) => {
 
     return jsonResponse({ options });
   } catch (error) {
+    if (error instanceof Response) {
+      return error;
+    }
+
     console.error("generate-quotes failed", error);
     return jsonResponse(
       { error: error instanceof Error ? error.message : "Failed to generate quotes." },

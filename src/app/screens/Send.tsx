@@ -8,14 +8,24 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { formatDateTime } from "../lib/format";
 import { useEstimate } from "../lib/estimate-store";
 import { downloadProposalPdf, shareProposal } from "../services/export";
 import { sendProposalEmailViaSupabase } from "../services/supabase";
 
 export function Send() {
   const navigate = useNavigate();
-  const { approvalNote, approvalStatus, draft, options, pricingRules, proposal, selectedOptionId, saveEstimate } =
-    useEstimate();
+  const {
+    approvalNote,
+    approvalStatus,
+    deliveryHistory,
+    draft,
+    options,
+    pricingRules,
+    proposal,
+    selectedOptionId,
+    saveEstimate,
+  } = useEstimate();
   const [email, setEmail] = useState(draft.customerEmail);
   const [phone, setPhone] = useState(draft.customerPhone);
   const [status, setStatus] = useState("");
@@ -94,7 +104,6 @@ export function Send() {
                   setStatus("");
 
                   try {
-                    await saveEstimate("email");
                     await sendProposalEmailViaSupabase({
                       customerEmail: email,
                       draft,
@@ -103,6 +112,7 @@ export function Send() {
                       options,
                       selectedOptionId,
                     });
+                    await saveEstimate({ method: "email", destination: email });
                     setStatus("Proposal email sent.");
                     toast.success("Proposal email sent.");
                   } catch (error) {
@@ -144,7 +154,7 @@ export function Send() {
               <Button
                 className="mt-4 h-12 w-full rounded-full bg-emerald-600 text-white hover:bg-emerald-500"
                 onClick={async () => {
-                  await saveEstimate("sms");
+                  await saveEstimate({ method: "sms", destination: phone });
                   window.location.href = `sms:${phone}?body=${encodedSummary}`;
                   setStatus("Opened messaging app.");
                   toast.success("Opened messaging app.");
@@ -163,7 +173,7 @@ export function Send() {
               variant="outline"
               className="h-12 rounded-full border-slate-300"
               onClick={async () => {
-                await saveEstimate("download");
+                await saveEstimate({ method: "download", note: "PDF export opened" });
                 downloadProposalPdf(draft, pricingRules, proposal, options, selectedOptionId);
                 setStatus("Opened print dialog for PDF export.");
                 toast.success("Opened PDF export.");
@@ -179,7 +189,7 @@ export function Send() {
               onClick={async () => {
                 const shared = await shareProposal(draft, options, selectedOptionId);
                 if (shared) {
-                  await saveEstimate("share");
+                  await saveEstimate({ method: "share", note: "Native share sheet opened" });
                   setStatus("Shared proposal.");
                   toast.success("Shared proposal.");
                   return;
@@ -194,6 +204,34 @@ export function Send() {
               Share
             </Button>
           </div>
+        </Card>
+
+        <Card className="rounded-[28px] border-slate-200 bg-white/90 p-5">
+          <p className="font-semibold text-slate-950">Delivery activity</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Recent send and export actions for this proposal.
+          </p>
+
+          {deliveryHistory.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No delivery activity yet.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {deliveryHistory.map((event) => (
+                <div
+                  key={event.id}
+                  className="flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                >
+                  <div>
+                    <p className="font-medium capitalize text-slate-950">{event.method}</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {event.destination || event.note || "Proposal activity recorded"}
+                    </p>
+                  </div>
+                  <p className="text-right text-xs text-slate-500">{formatDateTime(event.timestamp)}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       </div>
 

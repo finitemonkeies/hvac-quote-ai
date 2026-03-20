@@ -3,116 +3,6 @@ import { calculateMonthlyPayment } from "../lib/format";
 import { generateQuoteOptionsViaSupabase, supabase } from "./supabase";
 import { enrichOptionsWithVendorComparisons } from "./vendor-marketplace";
 
-const model = import.meta.env.VITE_OPENAI_MODEL ?? "gpt-5-mini";
-const openAiApiKey = import.meta.env.VITE_OPENAI_API_KEY;
-
-type OpenAiQuoteResponse = {
-  options: Array<{
-    level: "good" | "better" | "best";
-    systemName: string;
-    description: string;
-    features: string[];
-    estimatedPrice: number;
-    priceRangeLow: number;
-    priceRangeHigh: number;
-  }>;
-};
-
-const responseSchema = {
-  name: "hvac_quote_options",
-  strict: true,
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    required: ["options"],
-    properties: {
-      options: {
-        type: "array",
-        minItems: 3,
-        maxItems: 3,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: [
-            "level",
-            "systemName",
-            "description",
-            "features",
-            "estimatedPrice",
-            "priceRangeLow",
-            "priceRangeHigh",
-          ],
-          properties: {
-            level: {
-              type: "string",
-              enum: ["good", "better", "best"],
-            },
-            systemName: {
-              type: "string",
-            },
-            description: {
-              type: "string",
-            },
-            features: {
-              type: "array",
-              minItems: 3,
-              maxItems: 6,
-              items: {
-                type: "string",
-              },
-            },
-            estimatedPrice: {
-              type: "number",
-            },
-            priceRangeLow: {
-              type: "number",
-            },
-            priceRangeHigh: {
-              type: "number",
-            },
-          },
-        },
-      },
-    },
-  },
-};
-
-function sanitizeOptions(input: OpenAiQuoteResponse["options"]): QuoteOption[] {
-  const order: Array<"good" | "better" | "best"> = ["good", "better", "best"];
-
-  return order.map((level, index) => {
-    const option = input.find((item) => item.level === level) ?? input[index];
-    const safePrice = Math.max(0, Math.round(option?.estimatedPrice ?? 0));
-
-    return {
-      id: level,
-      level,
-      title: level === "good" ? "Good" : level === "better" ? "Better" : "Best",
-      systemName:
-        option?.systemName ??
-        (level === "good"
-          ? "14 SEER2 Comfort System"
-          : level === "better"
-            ? "16 SEER2 Performance System"
-            : "20 SEER2 High Efficiency System"),
-      description: option?.description ?? "",
-      features: option?.features?.slice(0, 6) ?? [],
-      estimatedPrice: safePrice,
-      priceRangeLow: Math.max(0, Math.round(option?.priceRangeLow ?? safePrice * 0.95)),
-      priceRangeHigh: Math.max(0, Math.round(option?.priceRangeHigh ?? safePrice * 1.06)),
-      isRecommended: level === "best",
-      hardCost: 0,
-      grossMarginPercent: 0,
-      policyStatus: "approved",
-      policyReason: null,
-      estimatedMonthlyPayment: null,
-      recommendedVendor: null,
-      vendorComparisons: [],
-      vendorStrategy: null,
-    };
-  });
-}
-
 function calculateBaseHardCost(draft: EstimateDraft, pricingRules: PricingRules) {
   const sizeFactor = Math.max(draft.homeSize, 1200) / 100;
   const packageMultiplier =
@@ -238,64 +128,6 @@ export function applyQuotePolicy(
   });
 }
 
-function buildPrompt(draft: EstimateDraft, pricingRules: PricingRules) {
-  return [
-    "You generate HVAC install estimate options for field technicians.",
-    "Return Good, Better, Best options only.",
-    "Use generic system names and do not mention manufacturers, SKUs, or inventory.",
-    "Good system name: 14 SEER2 Comfort System.",
-    "Better system name: 16 SEER2 Performance System.",
-    "Best system name: 20 SEER2 High Efficiency System.",
-    "Each option needs a concise description, 3-6 features, estimated price, and low/high range.",
-    "Make the Better option the baseline and Best the recommended option.",
-    "Pricing assumptions:",
-    JSON.stringify(pricingRules),
-    "Estimate context:",
-    JSON.stringify(draft),
-  ].join("\n");
-}
-
-async function generateWithOpenAi(draft: EstimateDraft, pricingRules: PricingRules) {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openAiApiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.4,
-      messages: [
-        {
-          role: "system",
-          content: "You create structured HVAC quote options for technicians.",
-        },
-        {
-          role: "user",
-          content: buildPrompt(draft, pricingRules),
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: responseSchema,
-      },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenAI request failed with ${response.status}`);
-  }
-
-  const payload = await response.json();
-  const content = payload.choices?.[0]?.message?.content;
-  const parsed = JSON.parse(content ?? "{}") as OpenAiQuoteResponse;
-  return enrichOptionsWithVendorComparisons(
-    draft,
-    pricingRules,
-    applyQuotePolicy(draft, pricingRules, sanitizeOptions(parsed.options ?? [])),
-  );
-}
-
 function generateFallbackOptions(draft: EstimateDraft, pricingRules: PricingRules): QuoteOption[] {
   const hardCost = calculateBaseHardCost(draft, pricingRules);
   const effectiveMargin = Math.max(draft.targetGrossMargin, pricingRules.marginFloorPercent);
@@ -399,14 +231,5 @@ export async function generateQuoteOptions(draft: EstimateDraft, pricingRules: P
     }
   }
 
-  if (!openAiApiKey) {
-    return generateFallbackOptions(draft, pricingRules);
-  }
-
-  try {
-    return await generateWithOpenAi(draft, pricingRules);
-  } catch (error) {
-    console.warn("Falling back to local quote generation", error);
-    return generateFallbackOptions(draft, pricingRules);
-  }
+  return generateFallbackOptions(draft, pricingRules);
 }

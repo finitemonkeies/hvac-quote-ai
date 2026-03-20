@@ -11,6 +11,7 @@ import type {
   EstimateApprovalStatus,
   EstimateDraft,
   EstimateRecord,
+  ProposalDeliveryEvent,
   PricingRules,
   ProposalCompany,
   QuoteOption,
@@ -29,9 +30,11 @@ const CURRENT_ESTIMATE_KEY = "hvac-quote-ai.current-estimate";
 const CURRENT_ESTIMATE_ID_KEY = "hvac-quote-ai.current-estimate-id";
 const CURRENT_OPTIONS_KEY = "hvac-quote-ai.current-options";
 const CURRENT_PROPOSAL_KEY = "hvac-quote-ai.current-proposal";
+const CURRENT_CREATED_AT_KEY = "hvac-quote-ai.current-created-at";
 const CURRENT_SELECTED_OPTION_KEY = "hvac-quote-ai.current-selected-option";
 const CURRENT_APPROVAL_STATUS_KEY = "hvac-quote-ai.current-approval-status";
 const CURRENT_APPROVAL_NOTE_KEY = "hvac-quote-ai.current-approval-note";
+const CURRENT_DELIVERY_HISTORY_KEY = "hvac-quote-ai.current-delivery-history";
 const COMPANY_PROFILE_KEY = "hvac-quote-ai.company-profile";
 const PRICING_RULES_KEY = "hvac-quote-ai.pricing-rules";
 const RECENT_ESTIMATES_KEY = "hvac-quote-ai.recent-estimates";
@@ -109,6 +112,7 @@ interface EstimateContextValue {
   selectedOptionId: string | null;
   approvalStatus: EstimateApprovalStatus;
   approvalNote: string;
+  deliveryHistory: ProposalDeliveryEvent[];
   isGenerating: boolean;
   isLoadingRecent: boolean;
   startNewEstimate: () => void;
@@ -121,7 +125,11 @@ interface EstimateContextValue {
   selectOption: (optionId: string) => void;
   updateApproval: (input: { status?: EstimateApprovalStatus; note?: string }) => void;
   loadEstimate: (record: EstimateRecord) => void;
-  saveEstimate: (deliveryMethod?: EstimateRecord["deliveryMethod"]) => Promise<EstimateRecord>;
+  saveEstimate: (delivery?: {
+    method: NonNullable<EstimateRecord["deliveryMethod"]>;
+    destination?: string;
+    note?: string;
+  }) => Promise<EstimateRecord>;
 }
 
 const EstimateContext = createContext<EstimateContextValue | null>(null);
@@ -172,6 +180,9 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   const [currentEstimateId, setCurrentEstimateId] = useState<string | null>(() =>
     readStorage<string | null>(CURRENT_ESTIMATE_ID_KEY, null),
   );
+  const [currentEstimateCreatedAt, setCurrentEstimateCreatedAt] = useState<string | null>(() =>
+    readStorage<string | null>(CURRENT_CREATED_AT_KEY, null),
+  );
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(() =>
     readStorage<string | null>(CURRENT_SELECTED_OPTION_KEY, null),
   );
@@ -179,6 +190,9 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     readStorage<EstimateApprovalStatus>(CURRENT_APPROVAL_STATUS_KEY, "not-required"),
   );
   const [approvalNote, setApprovalNote] = useState(() => readStorage(CURRENT_APPROVAL_NOTE_KEY, ""));
+  const [deliveryHistory, setDeliveryHistory] = useState<ProposalDeliveryEvent[]>(() =>
+    readStorage(CURRENT_DELIVERY_HISTORY_KEY, []),
+  );
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingRecent, setIsLoadingRecent] = useState(false);
 
@@ -189,6 +203,10 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     writeStorage(CURRENT_ESTIMATE_ID_KEY, currentEstimateId);
   }, [currentEstimateId]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_CREATED_AT_KEY, currentEstimateCreatedAt);
+  }, [currentEstimateCreatedAt]);
 
   useEffect(() => {
     writeStorage(CURRENT_OPTIONS_KEY, options);
@@ -217,6 +235,10 @@ export function EstimateProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     writeStorage(CURRENT_APPROVAL_NOTE_KEY, approvalNote);
   }, [approvalNote]);
+
+  useEffect(() => {
+    writeStorage(CURRENT_DELIVERY_HISTORY_KEY, deliveryHistory);
+  }, [deliveryHistory]);
 
   useEffect(() => {
     if (!user?.email) {
@@ -319,6 +341,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setApprovalStatus("not-required");
     setApprovalNote("");
     setCurrentEstimateId(null);
+    setCurrentEstimateCreatedAt(null);
+    setDeliveryHistory([]);
   };
 
   const updateDraft = (input: Partial<EstimateDraft>) => {
@@ -407,19 +431,40 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setApprovalStatus(record.approvalStatus ?? "not-required");
     setApprovalNote(record.approvalNote ?? "");
     setCurrentEstimateId(record.id);
+    setCurrentEstimateCreatedAt(record.createdAt);
+    setDeliveryHistory(record.deliveryHistory);
   };
 
-  const saveEstimate = async (deliveryMethod?: EstimateRecord["deliveryMethod"]) => {
+  const saveEstimate = async (delivery?: {
+    method: NonNullable<EstimateRecord["deliveryMethod"]>;
+    destination?: string;
+    note?: string;
+  }) => {
+    const nextCreatedAt = currentEstimateCreatedAt ?? new Date().toISOString();
+    const nextDeliveryHistory = delivery
+      ? [
+          {
+            id: crypto.randomUUID(),
+            method: delivery.method,
+            timestamp: new Date().toISOString(),
+            destination: delivery.destination,
+            note: delivery.note,
+          },
+          ...deliveryHistory,
+        ].slice(0, 12)
+      : deliveryHistory;
+
     const record: EstimateRecord = {
       id: currentEstimateId ?? crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
+      createdAt: nextCreatedAt,
       draft,
       options,
       proposal,
       selectedOptionId,
       approvalStatus,
       approvalNote,
-      deliveryMethod,
+      deliveryMethod: delivery?.method,
+      deliveryHistory: nextDeliveryHistory,
     };
 
     const filtered = recentEstimates.filter((item) => item.id !== record.id);
@@ -427,6 +472,8 @@ export function EstimateProvider({ children }: PropsWithChildren) {
     setRecentEstimates(nextRecent);
     writeStorage(RECENT_ESTIMATES_KEY, nextRecent);
     setCurrentEstimateId(record.id);
+    setCurrentEstimateCreatedAt(nextCreatedAt);
+    setDeliveryHistory(nextDeliveryHistory);
 
     await saveEstimateToSupabase(record);
 
@@ -444,6 +491,7 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       selectedOptionId,
       approvalStatus,
       approvalNote,
+      deliveryHistory,
       isGenerating,
       isLoadingRecent,
       startNewEstimate,
@@ -470,6 +518,7 @@ export function EstimateProvider({ children }: PropsWithChildren) {
       proposal,
       recentEstimates,
       selectedOptionId,
+      deliveryHistory,
     ],
   );
 

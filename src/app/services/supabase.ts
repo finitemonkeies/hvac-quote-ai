@@ -3,6 +3,7 @@ import type {
   EstimateDraft,
   EstimateRecord,
   PricingRules,
+  ProposalDeliveryEvent,
   ProposalCompany,
   QuoteOption,
   VendorComparison,
@@ -43,9 +44,10 @@ export type VendorQuoteRequestSummary = {
 };
 
 type EstimateSnapshot = {
-  version: 2;
+  version: 3;
   draft: EstimateDraft;
   proposal: ProposalCompany;
+  deliveryHistory: ProposalDeliveryEvent[];
 };
 
 type EstimateOptionRow = {
@@ -115,9 +117,10 @@ type OrganizationRow = {
 
 function buildSnapshot(record: EstimateRecord) {
   const snapshot: EstimateSnapshot = {
-    version: 2,
+    version: 3,
     draft: record.draft,
     proposal: record.proposal,
+    deliveryHistory: record.deliveryHistory,
   };
 
   return JSON.stringify(snapshot);
@@ -130,8 +133,13 @@ function parseSnapshot(raw: string | null) {
 
   try {
     const parsed = JSON.parse(raw) as Partial<EstimateSnapshot>;
-    if ((parsed.version === 1 || parsed.version === 2) && parsed.draft && parsed.proposal) {
-      return parsed as EstimateSnapshot;
+    if ((parsed.version === 1 || parsed.version === 2 || parsed.version === 3) && parsed.draft && parsed.proposal) {
+      return {
+        version: 3,
+        draft: parsed.draft,
+        proposal: parsed.proposal,
+        deliveryHistory: Array.isArray(parsed.deliveryHistory) ? parsed.deliveryHistory : [],
+      } as EstimateSnapshot;
     }
   } catch {
     return null;
@@ -297,6 +305,7 @@ function mapEstimateRow(row: EstimateRow): EstimateRecord {
     approvalStatus: row.approval_status ?? "not-required",
     approvalNote: row.approval_note ?? "",
     deliveryMethod: row.delivery_method ?? undefined,
+    deliveryHistory: snapshot?.deliveryHistory ?? [],
   };
 }
 

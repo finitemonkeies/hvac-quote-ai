@@ -1,6 +1,7 @@
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 type QuoteOption = {
@@ -86,6 +87,140 @@ function calculateMonthlyPayment(total: number, apr: number, termMonths: number)
   return (total * monthlyRate * factor) / (factor - 1);
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function safeText(value: string | null | undefined, fallback = "") {
+  return escapeHtml((value ?? fallback).trim() || fallback);
+}
+
+function renderMetaRow(label: string, value: string) {
+  return `
+    <tr>
+      <td style="padding:0 0 10px 0;font-size:14px;line-height:20px;color:#334155;">
+        <span style="font-weight:700;color:#0f172a;">${escapeHtml(label)}:</span> ${value}
+      </td>
+    </tr>
+  `;
+}
+
+function renderOptionCard(option: QuoteOption, selectedId: string | null) {
+  const borderColor = option.isRecommended ? "#2f66f5" : "#d7e2f0";
+  const titleColor = option.isRecommended ? "#1d4ed8" : "#0f172a";
+  const badge = option.isRecommended
+    ? `
+      <div style="margin:8px 0 0 0;">
+        <span style="display:inline-block;background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;border-radius:999px;padding:4px 10px;font-size:11px;line-height:16px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">
+          Recommended
+        </span>
+      </div>
+    `
+    : "";
+  const selectedNote =
+    selectedId === option.id
+      ? `
+        <tr>
+          <td style="padding:14px 0 0 0;font-size:12px;line-height:18px;font-weight:700;color:#2563eb;">
+            This option is currently selected for follow-up.
+          </td>
+        </tr>
+      `
+      : "";
+
+  return `
+    <tr>
+      <td style="padding:0 0 16px 0;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid ${borderColor};border-radius:20px;">
+          <tr>
+            <td style="padding:20px 20px 18px 20px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding:0;font-size:28px;line-height:34px;font-weight:800;color:${titleColor};">
+                    ${escapeHtml(option.title)}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0 0 0;font-size:14px;line-height:21px;color:#475569;">
+                    ${safeText(option.description)}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 0 0 0;font-size:42px;line-height:46px;font-weight:800;color:${titleColor};">
+                    ${formatCurrency(option.estimatedPrice)}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 0 0 0;font-size:13px;line-height:18px;color:#64748b;">
+                    ${formatCurrency(option.priceRangeLow)} - ${formatCurrency(option.priceRangeHigh)}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 0 0 0;font-size:14px;line-height:20px;font-weight:600;color:#334155;">
+                    ${safeText(option.systemName)}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:14px 0 0 0;">
+                    <ul style="margin:0;padding-left:20px;color:#1f2937;font-size:14px;line-height:22px;">
+                      ${option.features.map((feature) => `<li style="margin:0 0 6px 0;">${safeText(feature)}</li>`).join("")}
+                    </ul>
+                  </td>
+                </tr>
+                <tr>
+                  <td>${badge}</td>
+                </tr>
+                ${selectedNote}
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  `;
+}
+
+async function requireAuthenticatedUser(request: Request) {
+  const authorization = request.headers.get("Authorization") ?? request.headers.get("authorization");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+
+  if (!authorization?.startsWith("Bearer ")) {
+    throw new Response(JSON.stringify({ error: "Missing authorization token." }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Response(JSON.stringify({ error: "Missing Supabase auth configuration." }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    method: "GET",
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: authorization,
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Response(JSON.stringify({ error: errorText || "Invalid auth token." }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+}
+
 function buildHtml(payload: ProposalPayload) {
   const selected = payload.options.find((option) => option.id === payload.selectedOptionId) ?? null;
   const monthlyPayment =
@@ -108,74 +243,96 @@ function buildHtml(payload: ProposalPayload) {
     ]
       .filter(Boolean)
       .join(", ") || "None selected";
+  const contactLine = [payload.proposal.companyPhone, payload.proposal.companyEmail].filter(Boolean).map((value) => safeText(value)).join(" | ");
+  const introName = safeText(payload.draft.customerName, "there");
+  const projectAddress = safeText(payload.draft.propertyAddress, "your project location");
+  const existingSystem = `${safeText(payload.draft.existingSystemType, "Existing system")}${
+    payload.draft.existingSystemAge ? `, ${safeText(payload.draft.existingSystemAge)}` : ""
+  }`;
+  const financingLine =
+    payload.draft.financingEnabled && monthlyPayment
+      ? `${formatCurrency(monthlyPayment)} / month at ${payload.pricingRules.defaultFinancingApr}% APR for ${payload.draft.financingTermMonths} months`
+      : "Financing details not shown";
 
   return `
     <html>
-      <body style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,sans-serif;color:#0f172a;">
-        <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe2ea;border-radius:20px;padding:24px;">
-          <div style="margin-bottom:24px;">
-            <div style="font-size:28px;font-weight:700;">${payload.proposal.companyName}</div>
-            <div style="margin-top:8px;color:#475569;font-size:14px;">
-              ${payload.proposal.companyPhone || ""}${payload.proposal.companyPhone && payload.proposal.companyEmail ? " | " : ""}${payload.proposal.companyEmail || ""}
-            </div>
-            ${payload.proposal.companyLicense ? `<div style="margin-top:4px;color:#64748b;font-size:13px;">${payload.proposal.companyLicense}</div>` : ""}
-          </div>
-
-          <div style="margin-bottom:24px;font-size:15px;line-height:1.6;color:#334155;">
-            <p>Hello ${payload.draft.customerName || "there"},</p>
-            <p>Please review your HVAC proposal for ${payload.draft.propertyAddress || "your project location"}.</p>
-            ${
-              payload.draft.customerPhone || payload.draft.customerEmail
-                ? `<p style="margin-top:8px;">Contact on file: ${payload.draft.customerPhone || "No phone provided"}${
-                    payload.draft.customerPhone && payload.draft.customerEmail ? " | " : ""
-                  }${payload.draft.customerEmail || ""}</p>`
-                : ""
-            }
-            <p style="margin-top:8px;">Existing equipment: ${payload.draft.existingSystemType}${
-              payload.draft.existingSystemAge ? `, ${payload.draft.existingSystemAge}` : ""
-            } | ${payload.draft.existingFuelType} | ${payload.draft.existingSystemCondition}</p>
-            <p style="margin-top:8px;">Install conditions: ${payload.draft.accessDifficulty} | ${payload.draft.installLocation}</p>
-            <p style="margin-top:8px;">Package / brand: ${payload.draft.equipmentPackage} | ${payload.draft.preferredBrand}</p>
-            <p style="margin-top:8px;">Selected add-ons: ${selectedAddOns}</p>
-            ${
-              payload.draft.financingEnabled && monthlyPayment
-                ? `<p style="margin-top:8px;">Estimated financing: ${formatCurrency(monthlyPayment)} / month at ${payload.pricingRules.defaultFinancingApr}% APR for ${payload.draft.financingTermMonths} months</p>`
-                : ""
-            }
-            ${
-              payload.draft.comfortIssues
-                ? `<p style="margin-top:8px;">Comfort notes: ${payload.draft.comfortIssues}</p>`
-                : ""
-            }
-          </div>
-
-          <div style="display:grid;gap:14px;">
-            ${payload.options
-              .map((option) => {
-                const border = option.isRecommended ? "#2f66f5" : "#dbe2ea";
-                const accent = option.isRecommended ? "#2f66f5" : "#0f172a";
-                return `
-                  <div style="border:1px solid ${border};border-radius:18px;padding:18px;">
-                    <div style="display:flex;justify-content:space-between;gap:18px;align-items:flex-start;">
-                      <div>
-                        <div style="font-size:20px;font-weight:700;color:${accent};">${option.title}</div>
-                        <div style="margin-top:4px;font-size:14px;color:#475569;">${option.description}</div>
-                      </div>
-                      ${option.isRecommended ? `<div style="background:#2f66f5;color:#fff;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:700;text-transform:uppercase;">Recommended</div>` : ""}
+      <body style="margin:0;padding:0;background:#eef3f9;font-family:Arial,sans-serif;color:#0f172a;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#eef3f9;">
+          <tr>
+            <td align="center" style="padding:24px 12px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:720px;width:100%;background:#ffffff;border:1px solid #dbe2ea;border-radius:24px;">
+                <tr>
+                  <td style="padding:28px 28px 22px 28px;border-bottom:1px solid #e2e8f0;">
+                    <div style="font-size:32px;line-height:36px;font-weight:800;color:#0f172a;">${safeText(payload.proposal.companyName, "HVAC Quote AI")}</div>
+                    ${contactLine ? `<div style="margin-top:8px;font-size:14px;line-height:20px;color:#2563eb;">${contactLine}</div>` : ""}
+                    ${
+                      payload.proposal.companyLicense
+                        ? `<div style="margin-top:6px;font-size:13px;line-height:18px;color:#64748b;">${safeText(payload.proposal.companyLicense)}</div>`
+                        : ""
+                    }
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 28px 12px 28px;">
+                    <div style="font-size:24px;line-height:30px;font-weight:800;color:#0f172a;">Your HVAC proposal</div>
+                    <div style="margin-top:8px;font-size:15px;line-height:24px;color:#334155;">
+                      Hello ${introName},<br />
+                      Please review your install options for ${projectAddress}. Reply to this email or call us with any questions.
                     </div>
-                    <div style="margin-top:16px;font-size:34px;font-weight:700;color:${accent};">${formatCurrency(option.estimatedPrice)}</div>
-                    <div style="margin-top:4px;font-size:12px;color:#64748b;">${formatCurrency(option.priceRangeLow)} - ${formatCurrency(option.priceRangeHigh)}</div>
-                    <div style="margin-top:6px;font-size:13px;font-weight:600;color:#64748b;">${option.systemName}</div>
-                    <ul style="margin:16px 0 0 18px;padding:0;color:#334155;font-size:14px;line-height:1.6;">
-                      ${option.features.map((feature) => `<li>${feature}</li>`).join("")}
-                    </ul>
-                    ${selected?.id === option.id ? `<div style="margin-top:12px;font-size:12px;font-weight:700;color:#2f66f5;">This option is currently selected for follow-up.</div>` : ""}
-                  </div>
-                `;
-              })
-              .join("")}
-          </div>
-        </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 28px 8px 28px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#f8fbff;border:1px solid #d7e2f0;border-radius:18px;">
+                      <tr>
+                        <td style="padding:18px 20px;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                            ${renderMetaRow(
+                              "Contact on file",
+                              `${safeText(payload.draft.customerPhone, "No phone provided")}${payload.draft.customerPhone && payload.draft.customerEmail ? " | " : ""}${safeText(payload.draft.customerEmail)}`,
+                            )}
+                            ${renderMetaRow(
+                              "Existing equipment",
+                              `${existingSystem} | ${safeText(payload.draft.existingFuelType)} | ${safeText(payload.draft.existingSystemCondition)}`,
+                            )}
+                            ${renderMetaRow(
+                              "Install conditions",
+                              `${safeText(payload.draft.accessDifficulty)} | ${safeText(payload.draft.installLocation)}`,
+                            )}
+                            ${renderMetaRow(
+                              "Package / brand",
+                              `${safeText(payload.draft.equipmentPackage)} | ${safeText(payload.draft.preferredBrand)}`,
+                            )}
+                            ${renderMetaRow("Selected add-ons", safeText(selectedAddOns))}
+                            ${renderMetaRow("Estimated financing", financingLine)}
+                            ${
+                              payload.draft.comfortIssues
+                                ? renderMetaRow("Comfort notes", safeText(payload.draft.comfortIssues))
+                                : ""
+                            }
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:20px 28px 28px 28px;">
+                    <div style="padding:0 0 14px 0;font-size:18px;line-height:24px;font-weight:800;color:#0f172a;">
+                      Proposal options
+                    </div>
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;">
+                      ${payload.options.map((option) => renderOptionCard(option, selected?.id ?? null)).join("")}
+                    </table>
+                    <div style="padding-top:8px;font-size:13px;line-height:20px;color:#64748b;">
+                      Pricing reflects the scope and assumptions discussed on site. Reply to this email if you would like to adjust equipment, accessories, or financing.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
       </body>
     </html>
   `;
@@ -242,8 +399,10 @@ Deno.serve(async (request) => {
   }
 
   try {
+    await requireAuthenticatedUser(request);
+
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "quotes@send.hvacquote.pro";
+    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "quotes@hvacquote.pro";
 
     if (!resendApiKey) {
       throw new Error("Missing RESEND_API_KEY secret.");
@@ -293,6 +452,10 @@ Deno.serve(async (request) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
+    if (error instanceof Response) {
+      return error;
+    }
+
     const message = error instanceof Error ? error.message : "Unknown email send error.";
     return new Response(JSON.stringify({ error: message }), {
       status: 400,

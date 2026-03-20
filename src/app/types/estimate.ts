@@ -1,5 +1,14 @@
 export type QuoteLevel = "good" | "better" | "best";
 export type VendorAvailability = "in-stock" | "limited" | "special-order";
+export type DeliveryMethod = "email" | "sms" | "download" | "share";
+
+export interface ProposalDeliveryEvent {
+  id: string;
+  method: DeliveryMethod;
+  timestamp: string;
+  destination?: string;
+  note?: string;
+}
 
 export interface EstimateDraft {
   customerName: string;
@@ -114,5 +123,6 @@ export interface EstimateRecord {
   selectedOptionId: string | null;
   approvalStatus?: EstimateApprovalStatus;
   approvalNote?: string;
-  deliveryMethod?: "email" | "sms" | "download" | "share";
+  deliveryMethod?: DeliveryMethod;
+  deliveryHistory: ProposalDeliveryEvent[];
 }

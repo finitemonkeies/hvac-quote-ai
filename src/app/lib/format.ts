@@ -26,6 +26,17 @@ export function formatRelativeDate(dateString: string) {
   });
 }
 
+export function formatDateTime(dateString: string) {
+  const date = new Date(dateString);
+
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function calculateMonthlyPayment(total: number, apr: number, termMonths: number) {
   if (termMonths <= 0) {
     return 0;
