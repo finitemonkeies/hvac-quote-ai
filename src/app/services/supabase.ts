@@ -33,6 +33,15 @@ export type WorkspaceMember = {
   role: "manager" | "rep";
 };
 
+export type VendorQuoteRequestSummary = {
+  id: string;
+  createdAt: string;
+  customerName: string | null;
+  systemType: string;
+  jobType: string;
+  itemCount: number;
+};
+
 type EstimateSnapshot = {
   version: 2;
   draft: EstimateDraft;
@@ -749,4 +758,49 @@ export async function generateQuoteOptionsViaSupabase(input: {
   }
 
   return options;
+}
+
+export async function fetchLatestVendorQuoteRequestSummary() {
+  if (!supabase) {
+    return null as VendorQuoteRequestSummary | null;
+  }
+
+  const profile = await fetchCurrentUserProfile();
+  if (!profile?.organizationId) {
+    return null as VendorQuoteRequestSummary | null;
+  }
+
+  const { data: requestRow, error } = await supabase
+    .from("vendor_quote_requests")
+    .select("id, created_at, customer_name, system_type, job_type")
+    .eq("organization_id", profile.organizationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to fetch vendor quote request.");
+  }
+
+  if (!requestRow) {
+    return null as VendorQuoteRequestSummary | null;
+  }
+
+  const { count, error: countError } = await supabase
+    .from("vendor_quote_items")
+    .select("id", { count: "exact", head: true })
+    .eq("request_id", requestRow.id as string);
+
+  if (countError) {
+    throw new Error(countError.message || "Failed to fetch vendor quote items.");
+  }
+
+  return {
+    id: requestRow.id as string,
+    createdAt: requestRow.created_at as string,
+    customerName: (requestRow.customer_name as string | null) ?? null,
+    systemType: requestRow.system_type as string,
+    jobType: requestRow.job_type as string,
+    itemCount: count ?? 0,
+  };
 }

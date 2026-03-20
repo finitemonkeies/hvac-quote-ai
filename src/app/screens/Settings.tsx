@@ -16,15 +16,31 @@ import {
 } from "../components/ui/select";
 import { useAuth } from "../lib/auth";
 import { useEstimate } from "../lib/estimate-store";
+import {
+  fetchLatestVendorQuoteRequestSummary,
+  generateQuoteOptionsViaSupabase,
+} from "../services/supabase";
+
+type SmokeTestResult = {
+  optionCount: number;
+  comparedVendorCount: number;
+  recommendedVendors: string[];
+  ranAt: string;
+  latestRequestId: string;
+  latestRequestCustomer: string;
+  latestRequestItemCount: number;
+};
 
 export function Settings() {
   const { joinWorkspace, members, profile, refreshMembers, setRole, updateMemberRole, updateWorkspace } =
     useAuth();
-  const { companyProfile, pricingRules, updateCompanyProfile, updatePricingRules } = useEstimate();
+  const { companyProfile, draft, pricingRules, updateCompanyProfile, updatePricingRules } = useEstimate();
   const [workspaceName, setWorkspaceName] = useState(profile?.organizationName ?? "");
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
   const [isJoiningWorkspace, setIsJoiningWorkspace] = useState(false);
+  const [isRunningSmokeTest, setIsRunningSmokeTest] = useState(false);
+  const [smokeTestResult, setSmokeTestResult] = useState<SmokeTestResult | null>(null);
 
   useEffect(() => {
     setWorkspaceName(profile?.organizationName ?? "");
@@ -85,6 +101,39 @@ export function Settings() {
       toast.success("Workspace team refreshed.");
     } catch (error) {
       toast.error(getErrorMessage(error, "Could not refresh workspace members."));
+    }
+  };
+
+  const handleQuoteBackendSmokeTest = async () => {
+    setIsRunningSmokeTest(true);
+
+    try {
+      const options = await generateQuoteOptionsViaSupabase({ draft, pricingRules });
+      const comparedVendorCount = options.reduce((total, option) => total + option.vendorComparisons.length, 0);
+      const recommendedVendors = options
+        .map((option) => option.recommendedVendor?.vendorName)
+        .filter(Boolean) as string[];
+      const latestRequest = await fetchLatestVendorQuoteRequestSummary();
+
+      if (!latestRequest) {
+        throw new Error("Quote function returned options, but no vendor quote request log was found.");
+      }
+
+      setSmokeTestResult({
+        optionCount: options.length,
+        comparedVendorCount,
+        recommendedVendors,
+        ranAt: new Date().toLocaleString(),
+        latestRequestId: latestRequest.id,
+        latestRequestCustomer: latestRequest.customerName || "No customer name",
+        latestRequestItemCount: latestRequest.itemCount,
+      });
+      toast.success("Quote backend smoke test and logging check passed.");
+    } catch (error) {
+      setSmokeTestResult(null);
+      toast.error(getErrorMessage(error, "Quote backend smoke test failed."));
+    } finally {
+      setIsRunningSmokeTest(false);
     }
   };
 
@@ -432,6 +481,48 @@ export function Settings() {
             </div>
           </div>
         </Card>
+
+        {profile?.role === "manager" ? (
+          <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">Backend Diagnostics</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Verifies the live `generate-quotes` edge function through your signed-in session.
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-xl border-slate-200 px-4"
+                onClick={() => void handleQuoteBackendSmokeTest()}
+                disabled={isRunningSmokeTest}
+              >
+                {isRunningSmokeTest ? "Running..." : "Run Smoke Test"}
+              </Button>
+            </div>
+
+            {smokeTestResult ? (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-950">Last successful run</p>
+                <p className="mt-1">Ran at {smokeTestResult.ranAt}</p>
+                <p className="mt-1">{smokeTestResult.optionCount} options returned from the backend.</p>
+                <p className="mt-1">{smokeTestResult.comparedVendorCount} vendor comparisons generated.</p>
+                <p className="mt-1">
+                  Recommended suppliers: {smokeTestResult.recommendedVendors.join(", ") || "None returned"}
+                </p>
+                <p className="mt-1">
+                  Latest logged request: {smokeTestResult.latestRequestId} for {smokeTestResult.latestRequestCustomer}
+                </p>
+                <p className="mt-1">{smokeTestResult.latestRequestItemCount} vendor quote rows recorded.</p>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-slate-500">
+                No smoke test has been run in this session yet.
+              </p>
+            )}
+          </Card>
+        ) : null}
 
         <p className="text-center text-sm text-slate-500">
           Changes save automatically and apply to the current proposal plus the next estimate you start.
