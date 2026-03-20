@@ -17,12 +17,14 @@ import {
 import { useAuth } from "../lib/auth";
 import { useEstimate } from "../lib/estimate-store";
 import {
+  fetchQuoteOutcomeAnalytics,
   fetchQuoteObservabilitySummary,
   fetchVendorIntegrationsFromSupabase,
   fetchLatestVendorQuoteRequestSummary,
   generateQuoteOptionsViaSupabase,
   saveVendorIntegrationToSupabase,
   testVendorIntegrationViaSupabase,
+  type QuoteOutcomeAnalyticsSummary,
   type QuoteObservabilitySummary,
 } from "../services/supabase";
 import type { VendorIntegration, VendorIntegrationTestResult } from "../types/estimate";
@@ -54,6 +56,8 @@ export function Settings() {
   const [vendorTestResults, setVendorTestResults] = useState<Record<string, VendorIntegrationTestResult>>({});
   const [observabilitySummary, setObservabilitySummary] = useState<QuoteObservabilitySummary | null>(null);
   const [isLoadingObservability, setIsLoadingObservability] = useState(false);
+  const [outcomeAnalytics, setOutcomeAnalytics] = useState<QuoteOutcomeAnalyticsSummary | null>(null);
+  const [isLoadingOutcomeAnalytics, setIsLoadingOutcomeAnalytics] = useState(false);
 
   useEffect(() => {
     setWorkspaceName(profile?.organizationName ?? "");
@@ -109,6 +113,35 @@ export function Settings() {
       .finally(() => {
         if (active) {
           setIsLoadingObservability(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.organizationId, profile?.role]);
+
+  useEffect(() => {
+    if (profile?.role !== "manager") {
+      setOutcomeAnalytics(null);
+      return;
+    }
+
+    let active = true;
+    setIsLoadingOutcomeAnalytics(true);
+
+    fetchQuoteOutcomeAnalytics()
+      .then((summary) => {
+        if (active) {
+          setOutcomeAnalytics(summary);
+        }
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error, "Could not load outcome analytics."));
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoadingOutcomeAnalytics(false);
         }
       });
 
@@ -201,6 +234,8 @@ export function Settings() {
       });
       const summary = await fetchQuoteObservabilitySummary();
       setObservabilitySummary(summary);
+      const analytics = await fetchQuoteOutcomeAnalytics();
+      setOutcomeAnalytics(analytics);
       toast.success("Quote backend smoke test and logging check passed.");
     } catch (error) {
       setSmokeTestResult(null);
@@ -254,6 +289,8 @@ export function Settings() {
       setVendors(refreshed);
       const summary = await fetchQuoteObservabilitySummary();
       setObservabilitySummary(summary);
+      const analytics = await fetchQuoteOutcomeAnalytics();
+      setOutcomeAnalytics(analytics);
       toast.success(`${vendor.name} test completed.`);
     } catch (error) {
       toast.error(getErrorMessage(error, "Could not test vendor integration."));
@@ -606,6 +643,68 @@ export function Settings() {
             </div>
           </div>
         </Card>
+
+        {profile?.role === "manager" ? (
+          <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">
+            <div className="mb-4 flex items-start gap-3">
+              <div className="rounded-2xl bg-indigo-50 p-3 text-indigo-700">
+                <Activity className="size-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">Outcome Analytics</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  See which reps, vendor paths, and package tiers are actually converting.
+                </p>
+              </div>
+            </div>
+
+            {isLoadingOutcomeAnalytics ? (
+              <p className="text-sm text-slate-500">Loading outcome analytics...</p>
+            ) : outcomeAnalytics ? (
+              <div className="space-y-4 text-sm text-slate-700">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-slate-500">Overall close rate</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{outcomeAnalytics.overallAcceptanceRate}%</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-slate-500">Closed proposals analyzed</p>
+                    <p className="mt-1 text-2xl font-semibold text-slate-950">{outcomeAnalytics.totalClosedEstimates}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="font-medium text-slate-950">Top reps</p>
+                  <p className="mt-2 text-slate-600">
+                    {outcomeAnalytics.repPerformance.length > 0
+                      ? outcomeAnalytics.repPerformance.map((rep) => `${rep.name}: ${rep.rate}% (${rep.accepted}/${rep.accepted + rep.lost})`).join(", ")
+                      : "No closed estimate data yet."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="font-medium text-slate-950">Top vendor paths</p>
+                  <p className="mt-2 text-slate-600">
+                    {outcomeAnalytics.vendorPerformance.length > 0
+                      ? outcomeAnalytics.vendorPerformance.map((vendor) => `${vendor.name}: ${vendor.rate}% (${vendor.accepted}/${vendor.accepted + vendor.lost})`).join(", ")
+                      : "No vendor conversion data yet."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="font-medium text-slate-950">Top package tiers</p>
+                  <p className="mt-2 text-slate-600">
+                    {outcomeAnalytics.packagePerformance.length > 0
+                      ? outcomeAnalytics.packagePerformance.map((pkg) => `${pkg.name}: ${pkg.rate}% (${pkg.accepted}/${pkg.accepted + pkg.lost})`).join(", ")
+                      : "No package conversion data yet."}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">No outcome analytics yet.</p>
+            )}
+          </Card>
+        ) : null}
 
         {profile?.role === "manager" ? (
           <Card className="rounded-[24px] border-slate-200 bg-white p-5 shadow-none">

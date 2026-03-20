@@ -60,6 +60,29 @@ export type QuoteObservabilitySummary = {
   topRecommendedVendors: Array<{ name: string; count: number }>;
 };
 
+export type QuoteOutcomeAnalyticsSummary = {
+  overallAcceptanceRate: number;
+  totalClosedEstimates: number;
+  repPerformance: Array<{
+    name: string;
+    accepted: number;
+    lost: number;
+    rate: number;
+  }>;
+  vendorPerformance: Array<{
+    name: string;
+    accepted: number;
+    lost: number;
+    rate: number;
+  }>;
+  packagePerformance: Array<{
+    name: string;
+    accepted: number;
+    lost: number;
+    rate: number;
+  }>;
+};
+
 type EstimateSnapshot = {
   version: 3;
   draft: EstimateDraft;
@@ -89,6 +112,7 @@ type EstimateOptionRow = {
 type EstimateRow = {
   id: string;
   created_at: string;
+  user_id: string | null;
   customer_name: string | null;
   property_address: string | null;
   job_type: string;
@@ -1066,5 +1090,109 @@ export async function fetchQuoteObservabilitySummary() {
       .sort((left, right) => right[1] - left[1])
       .slice(0, 3)
       .map(([name, count]) => ({ name, count })),
+  };
+}
+
+function calculateCloseRate(accepted: number, lost: number) {
+  const closed = accepted + lost;
+  if (closed === 0) {
+    return 0;
+  }
+
+  return Math.round((accepted / closed) * 100);
+}
+
+export async function fetchQuoteOutcomeAnalytics() {
+  if (!supabase) {
+    return null as QuoteOutcomeAnalyticsSummary | null;
+  }
+
+  const profile = await fetchCurrentUserProfile();
+  if (!profile?.organizationId) {
+    return null as QuoteOutcomeAnalyticsSummary | null;
+  }
+
+  const [{ data, error }, members] = await Promise.all([
+    supabase
+      .from("estimates")
+      .select(
+        "id, user_id, created_at, customer_name, property_address, job_type, system_type, project_scope, notes, selected_option_id, approval_status, approval_note, outcome_status, outcome_note, delivery_method, proposal_company_name, proposal_company_email, proposal_company_phone, estimate_options(level, title, system_name, description, features, estimated_price, price_range_low, price_range_high, is_recommended, hard_cost, gross_margin_percent, policy_status, policy_reason, estimated_monthly_payment, vendor_strategy, vendor_snapshot)",
+      )
+      .eq("organization_id", profile.organizationId)
+      .order("created_at", { ascending: false })
+      .limit(100),
+    fetchWorkspaceMembers(),
+  ]);
+
+  if (error) {
+    throw new Error(error.message || "Failed to fetch quote outcome analytics.");
+  }
+
+  const memberMap = new Map(members.map((member) => [member.id, member.fullName || "Workspace member"]));
+  const records = (data as EstimateRow[]).map(mapEstimateRow);
+  const rows = (data as EstimateRow[]).map((row, index) => ({
+    ownerName: memberMap.get(row.user_id ?? "") ?? "Workspace member",
+    record: records[index],
+  }));
+
+  const repStats = new Map<string, { accepted: number; lost: number }>();
+  const vendorStats = new Map<string, { accepted: number; lost: number }>();
+  const packageStats = new Map<string, { accepted: number; lost: number }>();
+
+  let totalAccepted = 0;
+  let totalLost = 0;
+
+  for (const row of rows) {
+    const outcomeStatus = row.record.outcomeStatus;
+    if (outcomeStatus !== "accepted" && outcomeStatus !== "lost") {
+      continue;
+    }
+
+    const selectedOption =
+      row.record.options.find((option) => option.id === row.record.selectedOptionId) ??
+      row.record.options[1] ??
+      row.record.options[0] ??
+      null;
+    const vendorName = selectedOption?.recommendedVendor?.vendorName ?? "No vendor";
+    const packageName = selectedOption?.title ?? "No package";
+
+    const increment = (map: Map<string, { accepted: number; lost: number }>, key: string) => {
+      const current = map.get(key) ?? { accepted: 0, lost: 0 };
+      if (outcomeStatus === "accepted") {
+        current.accepted += 1;
+      } else {
+        current.lost += 1;
+      }
+      map.set(key, current);
+    };
+
+    increment(repStats, row.ownerName);
+    increment(vendorStats, vendorName);
+    increment(packageStats, packageName);
+
+    if (outcomeStatus === "accepted") {
+      totalAccepted += 1;
+    } else {
+      totalLost += 1;
+    }
+  }
+
+  const toRankedList = (map: Map<string, { accepted: number; lost: number }>) =>
+    [...map.entries()]
+      .map(([name, stats]) => ({
+        name,
+        accepted: stats.accepted,
+        lost: stats.lost,
+        rate: calculateCloseRate(stats.accepted, stats.lost),
+      }))
+      .sort((left, right) => right.rate - left.rate || right.accepted - left.accepted)
+      .slice(0, 5);
+
+  return {
+    overallAcceptanceRate: calculateCloseRate(totalAccepted, totalLost),
+    totalClosedEstimates: totalAccepted + totalLost,
+    repPerformance: toRankedList(repStats),
+    vendorPerformance: toRankedList(vendorStats),
+    packagePerformance: toRankedList(packageStats),
   };
 }
